@@ -1,0 +1,42 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import {
+  ArrowRight, ChevronRight, Bot, MessageCircle, Star, Sparkles, Shield,
+  Zap, BarChart3, Users, Globe, CreditCard, Smartphone, CheckCircle,
+  ChevronDown, Menu, X, Clock, TrendingUp, DollarSign, Layers,
+  Target, RefreshCw, MessageSquare, Play, Rocket, LineChart,
+  Quote, HeadphonesIcon, ShoppingBag, Wallet, Repeat, Gem, Eye
+} from 'lucide-react';
+
+type Props = { onGetStarted?: () => void };
+
+const GradientText = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
+  <span className={\g-gradient-to-r from-emerald-400 to-emerald-300 bg-clip-text text-transparent \\}>{children}</span>
+);
+
+function AnimatedCounter({ value, suffix = '' }: { value: number; suffix?: string }) {
+  const [count, setCount] = useState(0);
+  const ref = useRef<HTMLSpanElement>(null);
+  const counted = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || counted.current) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      counted.current = true;
+      const duration = 2000;
+      const step = Math.max(1, Math.floor(value / 60));
+      const timer = setInterval(() => {
+        setCount(prev => {
+          const next = prev + step;
+          if (next >= value) { clearInterval(timer); return value; }
+          return next;
+        });
+      }, duration / (value / step));
+      observer.disconnect();
+    }, { threshold: 0.3 });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [value]);
+  return <span ref={ref}>{count.toLocaleString()}{suffix}</span>;
+}

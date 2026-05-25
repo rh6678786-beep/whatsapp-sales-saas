@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file: .env
+    volumes:
+      # Persist WhatsApp auth sessions & cache across restarts
+      - wwebjs_auth:/app/.wwebjs_auth
+      - wwebjs_cache:/app/.wwebjs_cache
+    restart: unless-stopped
+
+volumes:
+  wwebjs_auth:
+  wwebjs_cache:

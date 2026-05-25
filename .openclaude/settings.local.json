@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhZG1pbklkIjoiZGVmYXVsdC1hZG1pbiIsImlhdCI6MTc3OTM0MjM1OCwiZXhwIjoxNzc5NDI4NzU4fQ.w5FgH5rolX0y9ywqDKtrxAwM15qLqqiNiUK4ogkrKeQ\")",
+      "Bash(__NEW_LINE_4984ee757df4ba69__ echo:*)",
+      "Bash(curl -s http://localhost:3000/api/stats -H \"Authorization: Bearer $TOKEN\")",
+      "Bash(curl -s http://localhost:3000/api/products -H \"Authorization: Bearer $TOKEN\")",
+      "Bash(curl -s http://localhost:3000/api/sessions -H \"Authorization: Bearer $TOKEN\")",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}

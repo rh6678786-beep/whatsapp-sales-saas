@@ -1,0 +1,150 @@
+datasource db {
+  provider = "postgresql"
+
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Admin/Store Configuration Table
+model Admin {
+  adminId            String    @id
+  passwordHash       String?
+  storeName          String    @default("SalesForce AI")
+  geminiApiKey       String    @default("")
+  geminiModel        String    @default("gemini-2.0-flash")
+  jazzCashNumber     String    @default("0300-1234567")
+  advanceAmount      Int       @default(300)
+  businessLogo       String    @default("")
+  email              String    @default("")
+  phone              String    @default("")
+  address            String    @default("")
+  verifiedEmail      String?  @unique
+  onboardingComplete Boolean   @default(true)
+  paymentConfig      Json?     // Stores custom gateway settings
+  reEngagement       Json?     // Stores automated follow-up rules
+  facebook           Json?
+  instagram          Json?
+  telegram           Json?
+  notificationEmail  String    @default("")
+
+  // SMTP config (stored at super admin level)
+  smtpHost           String    @default("")
+  smtpPort           Int       @default(587)
+  smtpUser           String    @default("")
+  smtpPass           String    @default("")
+  emailReportsEnabled Boolean  @default(true)
+
+  // Extra settings catch-all for dynamic keys (tiktok, aiLearningPatterns, etc.)
+  subscription       Json?
+  tiktok             Json?
+  aiLearningPatterns Json?
+  
+  // Relations
+  products           Product[]
+  sessions           Session[]
+  orders             Order[]
+  deals              Deal[]
+}
+
+// 2. Products Catalog Table
+model Product {
+  id        String   @id @default(uuid())
+  adminId   String
+  name      String
+  price     Float
+  costPrice Float
+  features  String[] // Postgres array of features
+  images    String[] // Postgres array of image URLs
+  videos    String[] // Postgres array of video URLs
+  
+  // Relations
+  admin     Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+}
+
+// 3. Customer Chat Sessions Table
+model Session {
+  adminId           String
+  id                String    // Session ID (usually customer's phone number)
+  userId            String    // Customer's raw phone identifier
+  state             String    // e.g. "NEW", "PAYMENT_AWAITING", "ORDER_CONFIRMED"
+  selectedProductId String?
+  lastMessageAt     DateTime  @default(now())
+  remindersCount    Int       @default(0)
+  lastReminderAt    DateTime?
+  isBlocked         Boolean   @default(false)
+  metadata          Json?     // Stores dynamic buying signals, screenshots, addresses
+
+  // Relations
+  admin             Admin     @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  messages          Message[]
+
+  @@id([adminId, id])
+}
+
+// 4. Chat Messages History Table
+model Message {
+  id        String   @id @default(uuid())
+  adminId   String
+  sessionId String
+  role      String   // "user" or "model"
+  text      String   @db.Text
+  timestamp DateTime @default(now())
+  imageUrl  String?
+  videoUrl  String?
+
+  // Relations
+  session   Session  @relation(fields: [adminId, sessionId], references: [adminId, id], onDelete: Cascade)
+}
+
+// 5. OTP Store for Email Verification
+model OtpStore {
+  email     String   @id
+  otp       String
+  adminId   String
+  password  String
+  storeName String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// 7. Deals / Offers Table
+model Deal {
+  id            String   @id @default(uuid())
+  adminId       String
+  title         String
+  description   String   @default("")
+  productIds    String[] // Postgres array of product IDs for combo deals
+  discountPrice Float?   // Optional discount price (null = no discount, just a combo offer)
+  image         String   @default("")
+  startDate     DateTime?
+  endDate       DateTime?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  admin         Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+}
+
+// 6. Confirmed Orders Table
+model Order {
+  adminId              String
+  id                   String   // Matches Session ID / Customer ID
+  userId               String
+  productId            String
+  status               String   // "PENDING", "VERIFIED", "SHIPPED", "DELIVERED"
+  paymentScreenshotUrl String?
+  shippingAddress      String?
+  customerName         String?  // Customer's full name
+  customerPhone        String?  // Customer's contact number
+  amount               Float
+  costPrice            Float
+  createdAt            DateTime @default(now())
+  trackingId           String?
+  courier              String?
+
+  // Relations
+  admin                Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+
+  @@id([adminId, id])
+}
