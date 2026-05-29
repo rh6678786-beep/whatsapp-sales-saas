@@ -344,20 +344,24 @@ export async function verifyPaymentFromScreenshot(
       contents: [
         { inlineData: { data: imageBase64, mimeType: detectMimeType(imageBase64) } },
         {
-          text: `You are a payment verification assistant for a Pakistani e-commerce business. Analyze this payment screenshot carefully.
+          text: `You are a payment verification assistant for a Pakistani e-commerce business. Your analysis determines whether an order should be confirmed or flagged.
 
-Task: Determine if this is a valid, completed payment receipt for Rs.${amount}.
+STRICT VERIFICATION STANDARDS (DO NOT COMPROMISE):
+- VERIFIED: yes ONLY if the screenshot CLEARLY shows a SUCCESSFUL/COMPLETED transaction AND the amount matches or exceeds Rs.${amount}
+- If the transaction status is ambiguous, pending, failed, or unclear → VERIFIED: no
+- If the screenshot appears edited, tampered with, or suspiciously cropped → VERIFIED: no
+- If any key field (amount, status) is partially cut off or obscured → VERIFIED: no
+- Partial matches or incomplete screenshots are NOT sufficient for verification
 
-Extract the following details from the screenshot:
-- Transaction ID / Reference Number
-- Amount paid (exact number as shown)
-- Transaction date and time
-- Sender's name or phone number
+EXTRACTION TASK:
+Identify these four fields from the screenshot with maximum accuracy:
+1. Transaction ID / Reference Number (exact string as shown)
+2. Amount paid (numeric value only — strip currency symbols)
+3. Transaction date and time
+4. Sender's name or phone number (if visible)
 
-Return ONLY in this exact format (no other text):
-"VERIFIED: [yes/no] | TRANSACTION_ID: [id or NOT_VISIBLE] | AMOUNT: [number only] | DATE: [date] | SENDER: [name or number]"
-
-Note: Only return VERIFIED: yes if the screenshot clearly shows a SUCCESSFUL/COMPLETED transaction matching the expected amount.`,
+OUTPUT FORMAT — Return ONLY this exact format, no explanation, no extra text:
+VERIFIED: [yes/no] | TRANSACTION_ID: [id or NOT_VISIBLE] | AMOUNT: [number only] | DATE: [date or NOT_VISIBLE] | SENDER: [name/number or NOT_VISIBLE]`,
         },
       ],
     });
@@ -397,21 +401,25 @@ export async function analyzePaymentScreenshot(imageBase64: string, expectedAmou
       contents: [
         { inlineData: { data: imageBase64, mimeType: detectMimeType(imageBase64) } },
         {
-          text: `You are analyzing a mobile payment screenshot for a Pakistani online store's order verification system.
+          text: `You are extracting structured payment data from a mobile payment screenshot for a Pakistani e-commerce order verification system. Accuracy is critical — order confirmation depends on your extraction.
 
-${expectedText ? `Expected payment amount: Rs.${expectedAmount}` : 'No specific amount expected.'}
+${expectedText ? `Expected payment amount: Rs.${expectedAmount}. Flag if the actual amount differs significantly.` : 'No specific amount expected — extract whatever is shown.'}
 
-Extract the following from the screenshot with maximum accuracy:
+EXTRACTION FIELDS (extract each with maximum precision):
+1. TRANSACTION_DATE — Exact date and time as displayed (any format acceptable, but preserve original)
+2. AMOUNT_SENT — Numeric value only (e.g., 500, not "Rs.500" or "PKR 500"). If multiple amounts appear, extract the one representing the sent/paid amount.
+3. PAYMENT_METHOD — Platform or app name (JazzCash / EasyPaisa / Bank Transfer / NayaPay / Sadapay / other). If not identifiable, write "Unknown".
+4. SENDER_NUMBER — Sender's phone number or account identifier exactly as shown
+5. NOTES — Transaction status text (e.g., "Successful", "Completed", "Pending", "Failed") plus any visible discrepancy (wrong amount, rejected, expired link, etc.)
 
-1. TRANSACTION_DATE — Exact date shown (any format is fine)
-2. AMOUNT_SENT — Only the numeric amount (e.g., 500, not "Rs.500" or "PKR 500")
-3. PAYMENT_METHOD — Platform used (JazzCash / EasyPaisa / Bank Transfer / other)
-4. SENDER_NUMBER — Sender's phone number or account identifier
-5. NOTES — Transaction status shown (e.g., "Successful", "Completed"), or any discrepancy worth flagging
+CRITICAL RULES:
+- If a field is NOT clearly visible (obscured, cropped, low quality) → write "Not visible" — do NOT guess or infer
+- If the screenshot shows multiple transactions, extract the one most likely related to the expected amount or most recent
+- Normalize currency to PKR — if PKR or Rs is shown, omit the symbol and return only the number
+- If the transaction status shows failure or rejection, mention it prominently in NOTES
+- If the date format includes both Gregorian and Islamic calendars, prefer the Gregorian date
 
-If any field is not clearly visible, write "Not visible" — do NOT guess or infer.
-
-Return STRICTLY in this format (no extra text, no explanation):
+OUTPUT FORMAT — Return STRICTLY as follows, no extra text, no explanation:
 DATE: [value]
 AMOUNT: [value]
 METHOD: [value]

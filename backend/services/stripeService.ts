@@ -37,9 +37,10 @@ export interface SubscriptionPlan {
 export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     id: "free",
-    name: "Free",
+    name: "Free Trial",
     price: 0,
     currency: "pkr",
+    popular: true,
     features: [
       "30 customer conversations/month",
       "Manage up to 5 products",
@@ -99,13 +100,13 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     stripePriceId: process.env.STRIPE_STARTER_PRICE_ID || null,
   },
   {
-    id: "professional",
+    id: "pro",
     name: "Professional",
-    price: 3500,
+    price: 3000,
     currency: "pkr",
     popular: true,
     features: [
-      "1,500 customer conversations/month",
+      "Unlimited customer conversations",
       "Up to 100 products in catalog",
       "All channels: WhatsApp, Instagram, Facebook, Telegram",
       "Smart negotiation engine (closes more deals automatically)",
@@ -114,7 +115,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       "Priority support with fast response",
     ],
     limits: {
-      maxSessionsPerMonth: 1500,
+      maxSessionsPerMonth: -1,
       maxProducts: 100,
       maxBroadcastsPerMonth: 10,
       maxTeamMembers: 3,
@@ -133,21 +134,22 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     stripePriceId: process.env.STRIPE_PROFESSIONAL_PRICE_ID || null,
   },
   {
-    id: "business",
-    name: "Business",
-    price: 6500,
+    id: "enterprise",
+    name: "Enterprise",
+    price: 7000,
     currency: "pkr",
     features: [
-      "5,000 customer conversations/month",
+      "Unlimited customer conversations",
       "Up to 500 products in catalog",
       "All channels: WhatsApp, Instagram, Facebook, Telegram",
       "Smart negotiation + custom AI persona",
       "Bulk broadcast messaging",
       "Auto re-engagement + lead scoring",
+      "White label — your brand, our tech",
       "Dedicated support with fast response",
     ],
     limits: {
-      maxSessionsPerMonth: 5000,
+      maxSessionsPerMonth: -1,
       maxProducts: 500,
       maxBroadcastsPerMonth: 50,
       maxTeamMembers: 10,
@@ -160,43 +162,10 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       reEngagement: true,
       analytics: 'full',
       aiPersona: true,
-      whiteLabel: false,
-      paymentVerification: true,
-    },
-    stripePriceId: null,
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    price: 15000,
-    currency: "pkr",
-    features: [
-      "Unlimited conversations — no monthly cap",
-      "Unlimited product catalog",
-      "All channels: WhatsApp, Instagram, Facebook, Telegram",
-      "Custom API & third-party integrations",
-      "Dedicated account manager assigned to you",
-      "White-label: your brand, your bot",
-      "Custom feature development on request",
-    ],
-    limits: {
-      maxSessionsPerMonth: 999999,
-      maxProducts: 999999,
-      maxBroadcastsPerMonth: 999,
-      maxTeamMembers: 999,
-    },
-    capabilities: {
-      instagram: true,
-      facebook: true,
-      telegram: true,
-      broadcast: true,
-      reEngagement: true,
-      analytics: 'full',
-      aiPersona: true,
       whiteLabel: true,
       paymentVerification: true,
     },
-    stripePriceId: process.env.STRIPE_ENTERPRISE_PRICE_ID || null,
+    stripePriceId: process.env.STRIPE_BUSINESS_PRICE_ID || null,
   },
 ];
 
@@ -383,10 +352,10 @@ export async function getSubscriptionStatus(
     };
   }
 
-  // Trial: grant Professional plan limits during trial period
+  // Trial: grant Pro plan limits during trial period
   let effectivePlanId = sub.planId;
   if (sub.status === "trialing") {
-    effectivePlanId = "professional";
+    effectivePlanId = "pro";
   }
 
   const plan = getPlanById(effectivePlanId) || SUBSCRIPTION_PLANS[0];

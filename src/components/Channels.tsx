@@ -90,9 +90,7 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
 
     const handleAuthMessage = async (event: MessageEvent) => {
       if (event.data?.type === 'FB_AUTH_SUCCESS') {
-        await axios.post('/api/facebook/config', { isActive: true });
-        setFbConnected(true);
-        setIgConnected(true);
+        await loadFacebookConfig();
       } else if (event.data?.type === 'TIKTOK_AUTH_SUCCESS') {
         await axios.post('/api/tiktok/config', { isActive: true });
         setTiktokConnected(true);
@@ -120,6 +118,16 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
       if (res.data.tiktok) {
         setTiktokConfig(res.data.tiktok);
         setTiktokConnected(res.data.tiktok.isActive);
+      }
+      if (res.data.telegram) {
+        setTelegramConfig({
+          botToken: res.data.telegram.botToken || '',
+          isActive: !!res.data.telegram.isActive
+        });
+        setTgConnected(!!res.data.telegram.isActive);
+        if (res.data.telegram.botName) {
+          setTgBotName(res.data.telegram.botName);
+        }
       }
     } catch (err) { }
   };

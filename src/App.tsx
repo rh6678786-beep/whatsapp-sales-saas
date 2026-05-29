@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
-import Login from './components/Login';
+import Signin from './components/Signin';
+import Signup from './components/Signup';
 import OnboardingWizard from './components/OnboardingWizard';
 
 import { LayoutDashboard, Package, ShieldCheck, Settings, LogOut, Menu, X, Smartphone, MessageSquare, Sun, Moon, Megaphone, FileText, ChevronDown, ChevronRight, CreditCard, Share2, Users, Store, Shield, DollarSign, HelpCircle, Tag, ShoppingBag } from 'lucide-react';
@@ -42,6 +43,7 @@ const SuperAdmin = React.lazy(() => import('./components/SuperAdmin'));
 const Billing = React.lazy(() => import('./components/Billing'));
 const SettingsPage = React.lazy(() => import('./components/Settings'));
 const HelpPage = React.lazy(() => import('./components/Help'));
+const AutoPublisher = React.lazy(() => import('./components/AutoPublisher'));
 
 const TabFallback = () => <div className="flex items-center justify-center h-64 text-zinc-400 text-sm font-medium">Loading...</div>;
 
@@ -66,7 +68,7 @@ axios.interceptors.response.use(
   }
 );
 
-type MainTab = 'dashboard' | 'whatsapp' | 'channels' | 'products' | 'orders' | 'reports' | 'reengage' | 'tester' | 'help' | 'payments' | 'settings' | 'super' | 'billing';
+type MainTab = 'dashboard' | 'whatsapp' | 'channels' | 'products' | 'orders' | 'reports' | 'reengage' | 'tester' | 'help' | 'payments' | 'settings' | 'super' | 'billing' | 'autopost';
 type WhatsAppSubTab = 'connector' | 'chats' | 'broadcast';
 type ProductsSubTab = 'products' | 'deals';
 
@@ -91,6 +93,7 @@ export default function App() {
   });
   // When the user clicks "Get Started" we show the Login component instead of the landing page
   const [showLogin, setShowLogin] = useState(false);
+  const [showSignup, setShowSignup] = useState(false);
   const [notifiedSessionIds, setNotifiedSessionIds] = useState<Set<string>>(new Set());
   const [pendingCount, setPendingCount] = useState(0);
   const [businessLogo, setBusinessLogo] = useState('');
@@ -205,13 +208,15 @@ export default function App() {
   };
 
   if (!isAuthenticated) {
+    if (showSignup) {
+      return <Signup onSignup={handleLogin} onSignIn={() => { setShowSignup(false); setShowLogin(true); }} />;
+    }
     if (showLogin) {
-      // Show the actual login form
-      return <Login onLogin={handleLogin} />;
+      return <Signin onSignin={handleLogin} onSignUp={() => { setShowLogin(false); setShowSignup(true); }} />;
     }
     return (
       <React.Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-        <LandingPage onGetStarted={() => setShowLogin(true)} />
+        <LandingPage onGetStarted={() => setShowSignup(true)} onLogin={() => setShowLogin(true)} />
       </React.Suspense>
     );
   }
@@ -229,6 +234,7 @@ export default function App() {
     { id: 'billing', label: 'Billing', icon: DollarSign },
     { id: 'payments', label: 'Payments', icon: CreditCard },
     { id: 'channels', label: 'Channels', icon: Share2 },
+    { id: 'autopost', label: 'AI Publisher', icon: Megaphone },
     { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'tester', label: 'Simulator', icon: MessageSquare },
     { id: 'help', label: 'Help', icon: HelpCircle },
@@ -329,6 +335,7 @@ export default function App() {
                 tester: 'text-pink-500',
                 reports: 'text-blue-500',
                 payments: 'text-purple-500',
+                autopost: 'text-amber-500',
               };
               return (
                 <div key={tab.id} className="relative">
@@ -540,6 +547,7 @@ export default function App() {
                 {activeMainTab === 'billing' && <Billing />}
                 {activeMainTab === 'payments' && <PaymentSettings />}
                 {activeMainTab === 'tester' && <BotTester />}
+                {activeMainTab === 'autopost' && <AutoPublisher />}
                 {activeMainTab === 'help' && <HelpPage />}
                 {activeMainTab === 'settings' && <SettingsPage />}
                 {activeMainTab === 'super' && <SuperAdmin />}

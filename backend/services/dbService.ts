@@ -23,15 +23,6 @@ pool.on("error", (err) => {
   console.warn("[DB] PostgreSQL pool error (non-fatal):", err.message);
 });
 pool.on("remove", () => {});
-let draining = false;
-async function drainPool() {
-  if (draining) return;
-  draining = true;
-  try { await pool.end(); } catch {}
-}
-process.on("SIGTERM", drainPool);
-process.on("SIGINT", drainPool);
-process.on("exit", drainPool);
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
@@ -99,6 +90,7 @@ const defaultSettings = {
   phone: "",
   address: "",
   onboardingComplete: true,
+  language: "ur",
   reEngagement: null,
   facebook: null,
   instagram: null,
@@ -163,7 +155,8 @@ const SETTINGS_FIELDS = [
   "geminiApiKey", "geminiModel", "storeName", "jazzCashNumber",
   "advanceAmount", "businessLogo", "email", "phone", "address",
   "onboardingComplete", "notificationEmail", "smtpHost", "smtpPort",
-  "smtpUser", "smtpPass", "emailReportsEnabled",
+  "smtpUser", "smtpPass", "emailReportsEnabled", "language",
+  "verifiedEmail",
 ] as const;
 
 const SETTINGS_JSON_FIELDS = [
@@ -182,7 +175,8 @@ export const dbService = {
     if (!admin) return { ...defaultSettings };
     const settings: any = { ...defaultSettings };
     for (const field of SETTINGS_FIELDS) {
-      settings[field] = (admin as any)[field];
+      const val = (admin as any)[field];
+      settings[field] = val ?? (defaultSettings as any)[field];
     }
     for (const field of SETTINGS_JSON_FIELDS) {
       settings[field] = (admin as any)[field] ?? null;
@@ -704,12 +698,12 @@ export const dbService = {
   // ==========================================
   // OTP STORAGE (reuses the same PrismaClient)
   // ==========================================
-  async saveOtp(email: string, otp: string, adminId: string, password: string, storeName: string | null, expiresAt: Date) {
+  async saveOtp(email: string, otp: string, adminId: string, password: string, storeName: string | null, expiresAt: Date, phone?: string | null) {
     await withRetry(() =>
       prisma.otpStore.upsert({
         where: { email },
-        create: { email, otp, adminId, password, storeName, expiresAt },
-        update: { otp, adminId, password, storeName, expiresAt },
+        create: { email, otp, adminId, password, storeName, phone, expiresAt },
+        update: { otp, adminId, password, storeName, phone, expiresAt },
       })
     );
   },

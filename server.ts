@@ -20,12 +20,15 @@ import {
   isWhatsAppReady
 } from "./backend/lib/whatsappClient.js";
 import { testInstagramConnection } from "./backend/services/instagramService.js";
-import { testTelegramConnection } from "./backend/services/telegramService.js";
+import { testTelegramConnection, setTelegramWebhook, deleteTelegramWebhook, handleTelegramIncoming } from "./backend/services/telegramService.js";
 import { analyzePaymentScreenshot } from "./backend/services/paymentService.js";
 import { processReEngagement, previewReEngagement, findInactiveCustomers } from "./backend/services/reEngagementService.js";
 import { testFacebookConnection } from "./backend/services/facebookService.js";
 import { sendDailyReportToAllAdmins, sendTestEmail } from "./backend/services/emailService.js";
+import { generateEnhancedPost } from "./backend/services/aiService.js";
+import { startAiRetryProcessor } from "./backend/services/aiRetryQueue.js";
 import { Order } from "./src/types.js";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -135,7 +138,7 @@ async function startServer() {
   // ==========================================
   app.post("/api/auth/send-otp", async (req, res) => {
     try {
-      const { email, adminId, password, storeName } = req.body;
+      const { email, adminId, password, storeName, phone } = req.body;
 
       if (!email || !adminId || !password) {
         return res.status(400).json({ error: "email, adminId, and password are required" });
@@ -158,7 +161,7 @@ async function startServer() {
         return res.status(409).json({ error: "This Store ID already exists." });
       }
 
-      const result = await sendOtp(email, { adminId, password, storeName });
+      const result = await sendOtp(email, { adminId, password, storeName, phone });
 
       if (!result.success) {
         return res.status(500).json({ error: result.error || "Failed to send OTP" });
@@ -184,7 +187,7 @@ async function startServer() {
         return res.status(400).json({ error: verification.error || "Verification failed" });
       }
 
-      const { adminId, password, storeName } = verification.data!;
+      const { adminId, password, storeName, phone } = verification.data!;
 
       const emailExists = await dbService.adminExistsByEmail(email);
       if (emailExists) {
@@ -206,6 +209,10 @@ async function startServer() {
 
       if (storeName) {
         await dbService.updateSettings(adminId, { storeName });
+      }
+
+      if (phone) {
+        await dbService.updateSettings(adminId, { phone });
       }
 
       const token = generateToken(adminId);
@@ -288,6 +295,413 @@ async function startServer() {
       const token = generateToken(adminId);
       const settings = await dbService.getSettings(adminId);
       res.json({ success: true, token, adminId, storeName: settings.storeName });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // INSTAGRAM OAUTH
+  // ==========================================
+  const FB_APP_ID = process.env.FACEBOOK_CLIENT_ID || "";
+  const FB_APP_SECRET = process.env.FACEBOOK_CLIENT_SECRET || "";
+  const FB_REDIRECT_URI = `${process.env.APP_URL || process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`}/api/auth/instagram/callback`;
+
+  app.get("/api/auth/facebook/login", (req, res) => {
+    res.redirect("/api/auth/instagram/login");
+  });
+
+  app.get("/api/auth/instagram/login", (req, res) => {
+    if (!FB_APP_ID) {
+      return res.send(`
+        <html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#fafafa;">
+          <div style="text-align:center;max-width:400px;padding:40px;">
+            <h2 style="color:#e11d48;">Facebook App Not Configured</h2>
+            <p style="color:#64748b;margin-top:12px;">Set <code style="background:#f1f5f9;padding:2px 8px;border-radius:4px;">FACEBOOK_CLIENT_ID</code> and <code style="background:#f1f5f9;padding:2px 8px;border-radius:4px;">FACEBOOK_CLIENT_SECRET</code> in your <code style="background:#f1f5f9;padding:2px 8px;border-radius:4px;">.env</code> file to enable Instagram login.</p>
+            <p style="color:#94a3b8;font-size:13px;margin-top:16px;">You can still connect manually via the Advanced Developer Setup below.</p>
+            <script>window.opener?.postMessage({ type: 'instagram_oauth_error', error: 'Facebook App not configured' }, '*');</script>
+          </div>
+        </body></html>
+      `);
+    }
+    const state = randomUUID();
+    const fbOAuthUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${FB_APP_ID}&redirect_uri=${encodeURIComponent(FB_REDIRECT_URI)}&state=${state}&scope=instagram_basic,instagram_manage_messages,pages_show_list,pages_messaging&response_type=code`;
+    res.redirect(fbOAuthUrl);
+  });
+
+  app.get("/api/auth/instagram/callback", async (req, res) => {
+    const { code, state, error: fbError } = req.query;
+    if (fbError) {
+      return res.send(`<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><p style="color:#ef4444;">Facebook authorization failed: ${fbError}</p><script>window.close();</script></body></html>`);
+    }
+    if (!code) {
+      return res.send(`<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><p style="color:#ef4444;">No authorization code received.</p><script>window.close();</script></body></html>`);
+    }
+    try {
+      // Exchange code for access token
+      const tokenRes = await axios.get("https://graph.facebook.com/v18.0/oauth/access_token", {
+        params: {
+          client_id: FB_APP_ID,
+          client_secret: FB_APP_SECRET,
+          redirect_uri: FB_REDIRECT_URI,
+          code,
+        },
+      });
+      const accessToken = tokenRes.data.access_token;
+
+      // Get Facebook Pages
+      const pagesRes = await axios.get("https://graph.facebook.com/v18.0/me/accounts", {
+        params: { access_token: accessToken },
+      });
+      const page = pagesRes.data?.data?.[0];
+      if (!page) {
+        return res.send(`<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;"><p style="color:#ef4444;">No Facebook Page found. Create a Facebook Page first.</p><script>window.close();</script></body></html>`);
+      }
+      const pageAccessToken = page.access_token;
+      const pageId = page.id;
+
+      // Get Instagram Business Account linked to the page
+      let igBusinessId = "";
+      try {
+        const igRes = await axios.get(`https://graph.facebook.com/v18.0/${pageId}`, {
+          params: { access_token: pageAccessToken, fields: "instagram_business_account" },
+        });
+        igBusinessId = igRes.data?.instagram_business_account?.id || "";
+      } catch { /* no IG connected to this page */ }
+
+      // Save config to DB (use adminId from session or a query param)
+      const adminId = (req.query.state as string)?.split("_")?.[0] || "default-admin";
+
+      await dbService.updateSettings(adminId, {
+        instagram: { igBusinessId, pageAccessToken, verifyToken: "", isActive: !!igBusinessId },
+        facebook: { pageAccessToken, pageId, isActive: true },
+      });
+
+      // Send success message to opener and close popup
+      res.send(`
+        <html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#fafafa;">
+          <div style="text-align:center;">
+            <div style="width:48px;height:48px;border-radius:24px;background:#10b981;color:white;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:24px;">✓</div>
+            <h3 style="color:#1e293b;">Instagram Connected!</h3>
+            <p style="color:#64748b;font-size:13px;">${igBusinessId ? 'IG Business ID: ' + igBusinessId : 'No Instagram Business Account linked to this page.'}</p>
+          </div>
+          <script>
+            window.opener?.postMessage({
+              type: 'instagram_oauth',
+              igBusinessId: ${JSON.stringify(igBusinessId)},
+              pageAccessToken: ${JSON.stringify(pageAccessToken)},
+            }, '*');
+            window.opener?.postMessage({
+              type: 'FB_AUTH_SUCCESS'
+            }, '*');
+            setTimeout(() => window.close(), 2000);
+          </script>
+        </body></html>
+      `);
+    } catch (error: any) {
+      console.error("[IG OAUTH ERROR]", error?.response?.data || error?.message);
+      res.send(`
+        <html><body style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;">
+          <p style="color:#ef4444;">OAuth failed: ${error?.response?.data?.error?.message || error?.message}</p>
+          <script>window.close();</script>
+        </body></html>
+      `);
+    }
+  });
+
+  // ==========================================
+  // TELEGRAM API
+  // ==========================================
+  app.post("/api/telegram/test", async (req, res) => {
+    try {
+      const { botToken } = req.body;
+      const result = await testTelegramConnection(botToken);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post("/api/telegram/config", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const settings = await dbService.getSettings(adminId);
+      const telegram = { ...(settings.telegram || {}), ...req.body };
+      await dbService.updateSettings(adminId, { telegram });
+
+      // Automatically register or delete webhook with Telegram
+      if (telegram.isActive && telegram.botToken) {
+        const appUrl = process.env.APP_URL || "";
+        if (appUrl) {
+          const webhookUrl = `${appUrl.replace(/\/$/, "")}/api/webhook/telegram/${adminId}`;
+          console.log(`[TG CONFIG][${adminId}] Registering webhook: ${webhookUrl}`);
+          const success = await setTelegramWebhook(webhookUrl, adminId);
+          if (!success) {
+            console.warn(`[TG CONFIG][${adminId}] Failed to set Telegram webhook.`);
+          }
+        } else {
+          console.warn(`[TG CONFIG][${adminId}] APP_URL not defined in environment. Webhook not set.`);
+        }
+      } else {
+        console.log(`[TG CONFIG][${adminId}] Deleting Telegram webhook.`);
+        await deleteTelegramWebhook(adminId);
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Telegram webhook receiver
+  app.post("/api/webhook/telegram/:adminId", async (req, res) => {
+    try {
+      const { adminId } = req.params;
+      const { message } = req.body;
+      if (message && message.chat && message.chat.id) {
+        const chatId = message.chat.id;
+        const text = message.text || "";
+        console.log(`[TG WEBHOOK][${adminId}] Received message from chat ${chatId}: "${text}"`);
+        // Process message in background to avoid API timeout
+        handleTelegramIncoming(chatId, text, adminId).catch(err => {
+          console.error(`[TG WEBHOOK PROCESS ERROR][${adminId}]`, err.message);
+        });
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("[TG WEBHOOK ERROR]", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // FACEBOOK/INSTAGRAM CONFIG API
+  // ==========================================
+  app.post("/api/instagram/test", async (req, res) => {
+    try {
+      const { igBusinessId, pageAccessToken } = req.body;
+      const result = await testInstagramConnection(igBusinessId, pageAccessToken);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post("/api/instagram/config", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const settings = await dbService.getSettings(adminId);
+      const instagram = { ...(settings.instagram || {}), ...req.body };
+      await dbService.updateSettings(adminId, { instagram });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/facebook/config", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const settings = await dbService.getSettings(adminId);
+      const facebook = { ...(settings.facebook || {}), ...req.body };
+      await dbService.updateSettings(adminId, { facebook });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/tiktok/config", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const settings = await dbService.getSettings(adminId);
+      const tiktok = { ...(settings.tiktok || {}), ...req.body };
+      await dbService.updateSettings(adminId, { tiktok });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // OMNICHANNEL PUBLISHING API
+  // ==========================================
+  const PUBLICATIONS_FILE = path.join(process.cwd(), "publications.json");
+
+  function readPublications(): any[] {
+    if (!fs.existsSync(PUBLICATIONS_FILE)) return [];
+    try {
+      return JSON.parse(fs.readFileSync(PUBLICATIONS_FILE, "utf8"));
+    } catch {
+      return [];
+    }
+  }
+
+  function writePublications(pubs: any[]) {
+    fs.writeFileSync(PUBLICATIONS_FILE, JSON.stringify(pubs, null, 2), "utf8");
+  }
+
+  app.get("/api/publish/history", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const allPubs = readPublications();
+      const adminPubs = allPubs.filter(p => p.adminId === adminId);
+      res.json(adminPubs.reverse());
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/publish/ai-enhance", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const { text } = req.body;
+      if (!text) {
+        return res.status(400).json({ error: "Text is required" });
+      }
+      const enhancedText = await generateEnhancedPost(adminId, text);
+      res.json({ success: true, enhancedText });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/publish", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const { content, mediaUrl, mediaType, platforms, scheduledTime } = req.body;
+
+      const newPub: any = {
+        id: randomUUID(),
+        adminId,
+        content,
+        mediaUrl,
+        mediaType: mediaType || 'none',
+        platforms,
+        status: scheduledTime ? 'scheduled' : 'published',
+        scheduledTime,
+        createdAt: new Date().toISOString(),
+      };
+
+      if (!scheduledTime) {
+        const settings = await dbService.getSettings(adminId);
+        const errors: string[] = [];
+
+        for (const platform of platforms) {
+          try {
+            if (platform === 'telegram') {
+              const tg = settings.telegram;
+              if (!tg || !tg.botToken || !tg.isActive) {
+                errors.push("Telegram is not configured or active");
+                continue;
+              }
+              const chatId = settings.telegramChannelId || settings.telegramChatId || "@my_test_channel";
+              if (mediaType === 'image' && mediaUrl) {
+                await axios.post(`https://api.telegram.org/bot${tg.botToken}/sendPhoto`, {
+                  chat_id: chatId,
+                  photo: mediaUrl,
+                  caption: content
+                });
+              } else if (mediaType === 'video' && mediaUrl) {
+                await axios.post(`https://api.telegram.org/bot${tg.botToken}/sendVideo`, {
+                  chat_id: chatId,
+                  video: mediaUrl,
+                  caption: content
+                });
+              } else {
+                await axios.post(`https://api.telegram.org/bot${tg.botToken}/sendMessage`, {
+                  chat_id: chatId,
+                  text: content
+                });
+              }
+            } else if (platform === 'facebook') {
+              const fb = settings.facebook;
+              if (!fb || !fb.pageAccessToken || !fb.pageId || !fb.isActive) {
+                errors.push("Facebook Messenger/Page is not configured or active");
+                continue;
+              }
+              if (mediaType === 'image' && mediaUrl) {
+                await axios.post(`https://graph.facebook.com/v18.0/${fb.pageId}/photos`, {
+                  url: mediaUrl,
+                  message: content,
+                  access_token: fb.pageAccessToken
+                });
+              } else if (mediaType === 'video' && mediaUrl) {
+                await axios.post(`https://graph.facebook.com/v18.0/${fb.pageId}/videos`, {
+                  file_url: mediaUrl,
+                  description: content,
+                  access_token: fb.pageAccessToken
+                });
+              } else {
+                await axios.post(`https://graph.facebook.com/v18.0/${fb.pageId}/feed`, {
+                  message: content,
+                  access_token: fb.pageAccessToken
+                });
+              }
+            } else if (platform === 'instagram') {
+              const ig = settings.instagram;
+              if (!ig || !ig.igBusinessId || !ig.pageAccessToken || !ig.isActive) {
+                errors.push("Instagram is not configured or active");
+                continue;
+              }
+              if (mediaType === 'image' && mediaUrl) {
+                const containerRes = await axios.post(`https://graph.facebook.com/v18.0/${ig.igBusinessId}/media`, {
+                  image_url: mediaUrl,
+                  caption: content,
+                  access_token: ig.pageAccessToken
+                });
+                const creationId = containerRes.data.id;
+                await axios.post(`https://graph.facebook.com/v18.0/${ig.igBusinessId}/media_publish`, {
+                  creation_id: creationId,
+                  access_token: ig.pageAccessToken
+                });
+              } else if (mediaType === 'video' && mediaUrl) {
+                const containerRes = await axios.post(`https://graph.facebook.com/v18.0/${ig.igBusinessId}/media`, {
+                  media_type: 'REELS',
+                  video_url: mediaUrl,
+                  caption: content,
+                  access_token: ig.pageAccessToken
+                });
+                const creationId = containerRes.data.id;
+                setTimeout(async () => {
+                  try {
+                    await axios.post(`https://graph.facebook.com/v18.0/${ig.igBusinessId}/media_publish`, {
+                      creation_id: creationId,
+                      access_token: ig.pageAccessToken
+                    });
+                  } catch (e: any) {
+                    console.error("IG Video publish failed:", e?.response?.data || e.message);
+                  }
+                }, 5000);
+              }
+            } else if (platform === 'whatsapp') {
+              if (!isWhatsAppReady(adminId)) {
+                errors.push("WhatsApp client is not authenticated or ready");
+                continue;
+              }
+              await sendWhatsAppMessage(adminId, "status-update", content);
+            }
+          } catch (platErr: any) {
+            console.error(`[PUBLISH ERROR][${platform}]`, platErr?.response?.data || platErr.message);
+            errors.push(`${platform}: ${platErr?.response?.data?.error?.message || platErr.message}`);
+          }
+        }
+
+        if (errors.length > 0) {
+          newPub.status = 'failed';
+          newPub.errorMessage = errors.join("; ");
+        }
+      }
+
+      const allPubs = readPublications();
+      allPubs.push(newPub);
+      writePublications(allPubs);
+
+      if (newPub.status === 'failed') {
+        return res.status(400).json({ success: false, error: newPub.errorMessage });
+      }
+
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -422,7 +836,6 @@ async function startServer() {
         adminId,
         storeName: settings.storeName || '',
         businessLogo: settings.businessLogo || '',
-        email: settings.email || '',
         phone: settings.phone || '',
         address: settings.address || '',
       });
@@ -434,7 +847,7 @@ async function startServer() {
   app.put("/api/settings/profile", async (req, res) => {
     try {
       const adminId = getAdminId(req);
-      const allowed = ['storeName', 'businessLogo', 'email', 'phone', 'address'];
+      const allowed = ['storeName', 'businessLogo', 'phone', 'address'];
       const updates: any = {};
       for (const key of allowed) {
         if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -443,6 +856,56 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // ==========================================
+  // EMAIL REPORT SETTINGS
+  // ==========================================
+  app.get("/api/email-report/settings", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const settings = await dbService.getSettings(adminId);
+      res.json({
+        notificationEmail: settings.notificationEmail || "",
+        smtpHost: settings.smtpHost || "",
+        smtpPort: settings.smtpPort || 587,
+        smtpUser: settings.smtpUser || "",
+        smtpPass: settings.smtpPass || "",
+        emailReportsEnabled: settings.emailReportsEnabled ?? true,
+        isSuperAdmin: adminId === "super-admin",
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/email-report/settings", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const { notificationEmail, smtpHost, smtpPort, smtpUser, smtpPass, emailReportsEnabled } = req.body;
+      await dbService.updateSettings(adminId, {
+        notificationEmail: notificationEmail || "",
+        smtpHost: smtpHost || "",
+        smtpPort: smtpPort || 587,
+        smtpUser: smtpUser || "",
+        smtpPass: smtpPass || "",
+        emailReportsEnabled: emailReportsEnabled ?? true,
+      });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/email-report/test", async (req, res) => {
+    try {
+      const adminId = getAdminId(req);
+      const { sendTestEmail } = await import("./backend/services/emailService.js");
+      const result = await sendTestEmail(adminId);
+      res.json(result);
+    } catch (error: any) {
+      res.json({ success: false, error: error.message });
     }
   });
 
@@ -882,13 +1345,28 @@ async function startServer() {
         return {
           id,
           storeName: settings.storeName || 'Unnamed Store',
-          verifiedEmail: settings.email || '',
+          verifiedEmail: settings.verifiedEmail || settings.email || '',
           phone: settings.phone || '',
+          address: settings.address || '',
+          language: settings.language || 'ur',
+          businessLogo: settings.businessLogo || '',
+          advanceAmount: settings.advanceAmount || 300,
+          jazzCashNumber: settings.jazzCashNumber || '',
+          onboardingComplete: settings.onboardingComplete ?? true,
+          channels: {
+            facebook: settings.facebook?.isActive || false,
+            instagram: settings.instagram?.isActive || false,
+            telegram: settings.telegram?.isActive || false,
+            tiktok: settings.tiktok?.isActive || false,
+          },
+          subscription: settings.subscription || null,
           stats: {
             products: stats.productCount || 0,
             sessions: stats.activeUsers + (stats.totalOrders || 0) + (stats.pendingPayments || 0),
             orders: stats.totalOrders,
-            totalSales: stats.totalSales
+            totalSales: stats.totalSales,
+            totalProfit: stats.totalProfit || 0,
+            pendingPayments: stats.pendingPayments || 0,
           }
         };
       }));
@@ -1018,10 +1496,39 @@ async function startServer() {
     });
   }
 
+  // Global error handlers to prevent server crash
+  process.on("unhandledRejection", (reason) => {
+    console.error("[FATAL] Unhandled Rejection:", reason);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[FATAL] Uncaught Exception:", err);
+  });
+
+  // Prevent accidental process exit from signals
+  process.removeAllListeners("SIGTERM");
+  process.removeAllListeners("SIGINT");
+  process.on("SIGTERM", () => { console.log("[SERVER] SIGTERM received, ignoring"); });
+  process.on("SIGINT", () => { console.log("[SERVER] SIGINT received, ignoring"); });
+
+  // Log process exit with stack trace
+  process.on("exit", (code) => {
+    console.log(`[SERVER] Process exiting with code ${code}`);
+    console.log(new Error("Stack trace").stack);
+  });
+
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error("[EXPRESS_ERROR]", err);
+    res.status(500).json({ error: "Internal server error" });
+  });
+
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
     console.log(`🚀 Multi-Tenant SaaS Server running on http://localhost:${PORT}`);
+    startAiRetryProcessor();
   });
+
+  // Keep process alive even if all handles close
+  setInterval(() => {}, 60000);
 }
 
 startServer();

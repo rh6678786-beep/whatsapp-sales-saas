@@ -17,6 +17,7 @@ model Admin {
   jazzCashNumber     String    @default("0300-1234567")
   advanceAmount      Int       @default(300)
   businessLogo       String    @default("")
+  language           String    @default("ur")
   email              String    @default("")
   phone              String    @default("")
   address            String    @default("")
@@ -105,6 +106,7 @@ model OtpStore {
   adminId   String
   password  String
   storeName String?
+  phone     String?
   expiresAt DateTime
   createdAt DateTime @default(now())
 }

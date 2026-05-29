@@ -22,7 +22,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     adminId: '',
     password: '',
     storeName: '',
-    email: '',
     phone: '',
     address: '',
   });
@@ -58,7 +57,6 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       }
       await axios.put('/api/settings/profile', {
         storeName: form.storeName,
-        email: form.email,
         phone: form.phone,
         address: form.address,
       });
@@ -152,15 +150,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Email</label>
-                    <input type="email" value={form.email} onChange={e => updateForm('email', e.target.value)} placeholder="store@example.com" className="w-full px-4 py-3.5 bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-zinc-900 dark:focus:border-white rounded-2xl outline-none text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 transition-all" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Phone</label>
-                    <input type="tel" value={form.phone} onChange={e => updateForm('phone', e.target.value)} placeholder="+92 300 1234567" className="w-full px-4 py-3.5 bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-zinc-900 dark:focus:border-white rounded-2xl outline-none text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 transition-all" />
-                  </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Phone</label>
+                  <input type="tel" value={form.phone} onChange={e => updateForm('phone', e.target.value)} placeholder="+92 300 1234567" className="w-full px-4 py-3.5 bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-zinc-900 dark:focus:border-white rounded-2xl outline-none text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 transition-all" />
                 </div>
 
                 <div className="space-y-1.5">

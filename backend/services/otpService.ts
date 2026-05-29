@@ -15,7 +15,7 @@ function getSmtpConfig() {
   };
 }
 
-export async function sendOtp(email: string, data: { adminId: string; password: string; storeName?: string }): Promise<{ success: boolean; error?: string }> {
+export async function sendOtp(email: string, data: { adminId: string; password: string; storeName?: string; phone?: string }): Promise<{ success: boolean; error?: string }> {
   try {
     const config = getSmtpConfig();
     if (!config.host || !config.user || !config.pass) {
@@ -25,7 +25,7 @@ export async function sendOtp(email: string, data: { adminId: string; password: 
     const otp = generateOtp();
     const expiresAt = new Date(Date.now() + 30 * 1000);
 
-    await dbService.saveOtp(email, otp, data.adminId, data.password, data.storeName || null, expiresAt);
+    await dbService.saveOtp(email, otp, data.adminId, data.password, data.storeName || null, expiresAt, data.phone || null);
 
     const transporter = nodemailer.createTransport({
       host: config.host,
@@ -63,7 +63,7 @@ export async function sendOtp(email: string, data: { adminId: string; password: 
   }
 }
 
-export async function verifyOtp(email: string, otp: string): Promise<{ valid: boolean; data?: { adminId: string; password: string; storeName?: string }; error?: string }> {
+export async function verifyOtp(email: string, otp: string): Promise<{ valid: boolean; data?: { adminId: string; password: string; storeName?: string; phone?: string }; error?: string }> {
   try {
     const entry = await dbService.getOtp(email);
 
@@ -81,7 +81,7 @@ export async function verifyOtp(email: string, otp: string): Promise<{ valid: bo
     }
 
     await dbService.deleteOtp(email);
-    return { valid: true, data: { adminId: entry.adminId, password: entry.password, storeName: entry.storeName || undefined } };
+    return { valid: true, data: { adminId: entry.adminId, password: entry.password, storeName: entry.storeName || undefined, phone: entry.phone || undefined } };
   } catch (error: any) {
     return { valid: false, error: error.message };
   }

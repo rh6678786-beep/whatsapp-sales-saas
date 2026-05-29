@@ -37,7 +37,7 @@ export default function TelegramSetup(props: Props) {
     try {
       const res = await axios.post('/api/telegram/test', { botToken: config.botToken });
       if (res.data.success) {
-        await axios.post('/api/telegram/config', { isActive: true, botToken: config.botToken });
+        await axios.post('/api/telegram/config', { isActive: true, botToken: config.botToken, botName: res.data.botName });
         setConnected(true);
         setBotName(res.data.botName);
       } else {

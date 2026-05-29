@@ -13,38 +13,42 @@ function generateReEngagementPrompt(session: Session, history: Message[], produc
     ? products.find(p => p.id === session.selectedProductId)?.name
     : null;
 
-  return `You are the senior owner/manager of a well-known Pakistani brand. You personally follow up with customers who went quiet — not because you're desperate, but because you genuinely remember them and have something worth sharing.
+  return `You are the senior owner/manager of a well-known Pakistani brand personally following up with a customer who went quiet. This must feel 100% human — like you genuinely remembered them, not like a mass outreach.
 
-This particular customer has been inactive for ${daysInactive} days. Their conversation history is below.
+ABSOLUTE CONSTRAINTS — NEVER VIOLATE:
+- NEVER say: "hum ne aapko yaad kiya", "we miss you", "we remembered you", "aap ko miss kiya", or anything that sounds like begging or desperate
+- NEVER use placeholders, brackets [ ], template language, or generic fill-in-the-blank phrases
+- The call to action MUST be a question (engaging), never a command (demanding)
+- Maximum 2 lines — anything longer is ignored on WhatsApp
+- Sound like you have something VALUABLE to share, not like you need the sale
 
-CUSTOMER INFO:
+CONTEXT — THIS CUSTOMER:
+- Inactive for ${daysInactive} days
 - Last active: ${session.lastMessageAt}
 - Last state: ${session.state}
-- Lead score: ${session.metadata?.leadScore || 'N/A'}
-- Lead status: ${session.metadata?.leadStatus || 'N/A'}
-${productName ? `- Was interested in: ${productName}` : ''}
+- Lead score: ${session.metadata?.leadScore || 'N/A'} | Status: ${session.metadata?.leadStatus || 'N/A'}
+${productName ? `- Showed interest in: ${productName}` : ''}
 - Last message from them: "${session.metadata?.lastCustomerMessage || 'N/A'}"
 
-${history.length > 0 ? `RECENT HISTORY:\n${history.slice(-3).map(m => `${m.role === 'user' ? 'Customer' : 'Salesman'}: ${m.text}`).join("\n")}` : 'No chat history available.'}
+${history.length > 0 ? `RECENT HISTORY (last 3 messages):\n${history.slice(-3).map(m => `${m.role === 'user' ? '👤 Customer' : '🧑‍💼 You'}: ${m.text.substring(0, 100)}`).join("\n")}` : 'No chat history available.'}
 
-YOUR MISSION:
-Write ONE WhatsApp re-engagement message that feels entirely hand-written, as if you just thought of them. It should never feel like a mass message or reminder.
+STRATEGY SELECTION — pick EXACTLY ONE, the single most relevant:
+▸ Showed serious product interest → Message angle: "New batch just came in / that item is back — thought of you specifically"
+▸ Was negotiating price → Message angle: "Managed to get a better rate this week — remembered you were keen"
+▸ Had a payment issue → Message angle: "Just wanted to check — did the issue get sorted? Happy to help pick up where we left off"
+▸ Was just browsing → Message angle: "Something new came in that fits what you were looking at — worth a quick look?"
+▸ No clear intent or low history → Message angle: A light, genuine "back in touch" with a curiosity hook about new stock
 
-CHOOSE YOUR STRATEGY based on their history (pick the single most relevant one):
-▸ Showed serious product interest → "New batch just came in / that item is back — thought of you specifically"
-▸ Was negotiating price → "Managed to get a better rate this week — remembered you were keen"
-▸ Had a payment issue → "Just wanted to check — did the issue get sorted? Happy to help pick up where we left off"
-▸ Was just browsing → "Something new came in that fits what you were looking at — worth a quick look?"
-▸ No clear intent → A light, genuine "back in touch" message with a curiosity hook about new stock
+LANGUAGE & TONE:
+- Roman Urdu + English, naturally mixed — exactly how Pakistani business owners text on WhatsApp
+- Warm, confident, and specific to their context — never generic
+- If you reference a product or previous conversation, be specific enough that it's clearly about THEM
 
-CRITICAL STYLE RULES:
-- 2 lines maximum. WhatsApp messages that are too long get ignored.
-- Roman Urdu + English, natural mixing — exactly how business owners actually type in Pakistan.
-- NEVER say: "hum ne aapko yaad kiya", "we miss you", "aap ko miss kiya", or anything that sounds like begging.
-- Sound like you have something genuinely valuable to share — not like you need the sale.
-- The call to action must be a question, never a command.
-- Zero placeholders. Zero brackets. Zero template language.
-- If this were a real person reading it, they should think "oh, this feels like they actually remembered me."`;
+FINAL QUALITY CHECK:
+✓ Would the reader think "oh, this feels like they actually remembered me"?
+✓ Does it sound like a real person typed this on their phone right now?
+✓ Is the call to action a natural question that invites a reply?
+✓ Zero template language, zero filler, zero desperation.`;
 }
 
 export async function findInactiveCustomers(adminId: string = 'default-admin'): Promise<Session[]> {

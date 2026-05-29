@@ -1,7 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Key, Smartphone, Zap, Save, CheckCircle, Shield, Lock, Eye, EyeOff, User, Sparkles, Banknote, RefreshCw, Loader2, X, ArrowRight, Store, Upload, ChevronDown, Mail, Send, Clock } from 'lucide-react';
+import { Settings as SettingsIcon, Key, Smartphone, Zap, Save, CheckCircle, Shield, Lock, Eye, EyeOff, User, Sparkles, Banknote, RefreshCw, Loader2, X, ArrowRight, Store, Upload, ChevronDown, Mail, Send, Clock, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
+
+const LANGUAGES = [
+  { code: 'ur', name: 'Urdu (Roman) — اردو' },
+  { code: 'en', name: 'English' },
+  { code: 'ar', name: 'العربية — Arabic' },
+  { code: 'hi', name: 'हिन्दी — Hindi' },
+  { code: 'bn', name: 'বাংলা — Bengali' },
+  { code: 'es', name: 'Español — Spanish' },
+  { code: 'fr', name: 'Français — French' },
+  { code: 'zh', name: '中文 — Chinese' },
+];
 
 export default function Settings() {
   const [settings, setSettings] = useState({
@@ -11,9 +22,9 @@ export default function Settings() {
     jazzCashNumber: '0300-1234567',
     advanceAmount: 300,
     businessLogo: '',
-    email: '',
     phone: '',
     address: '',
+    language: 'ur',
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -69,7 +80,7 @@ export default function Settings() {
   const fetchSettings = async () => {
     try {
       const res = await axios.get('/api/settings');
-      setSettings(prev => ({ ...prev, ...res.data }));
+      setSettings(prev => ({ ...prev, ...res.data, language: res.data.language || 'ur' }));
     } catch (err) {
       console.error('Failed to fetch settings:', err);
     }
@@ -120,9 +131,9 @@ export default function Settings() {
         storeName: settings.storeName,
         advanceAmount: settings.advanceAmount,
         businessLogo: settings.businessLogo,
-        email: settings.email,
         phone: settings.phone,
-        address: settings.address
+        address: settings.address,
+        language: settings.language,
       });
       setSaved(true);
       setTimeout(() => {
@@ -332,20 +343,6 @@ export default function Settings() {
             <div className="space-y-2">
               <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                 <span className="w-1 h-1 rounded-full bg-amber-500" />
-                Email
-              </label>
-              <input
-                type="email"
-                value={settings.email}
-                onChange={(e) => setSettings({ ...settings, email: e.target.value })}
-                placeholder="store@example.com"
-                className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 rounded-2xl px-5 py-4 text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 outline-none transition-all"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                <span className="w-1 h-1 rounded-full bg-amber-500" />
                 Phone
               </label>
               <input
@@ -458,6 +455,32 @@ export default function Settings() {
                   <ChevronDown className="w-4 h-4" />
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-violet-500" />
+                AI Language
+              </label>
+              <div className="relative">
+                <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-violet-500" />
+                <select
+                  value={settings.language}
+                  onChange={(e) => setSettings({ ...settings, language: e.target.value })}
+                  className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 focus:border-violet-500 focus:ring-4 focus:ring-violet-500/10 rounded-2xl pl-12 pr-5 py-4 text-sm font-bold text-zinc-900 dark:text-white outline-none transition-all appearance-none cursor-pointer"
+                >
+                  {LANGUAGES.map(lang => (
+                    <option key={lang.code} value={lang.code}>{lang.name}</option>
+                  ))}
+                </select>
+                <div className="absolute right-5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-400">
+                  <ChevronDown className="w-4 h-4" />
+                </div>
+              </div>
+              <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5 mt-1.5 ml-1">
+                <span className="w-1 h-1 rounded-full bg-violet-500" />
+                AI agent will respond to customers in the selected language
+              </p>
             </div>
           </div>
         </motion.div>

@@ -101,16 +101,14 @@ export default function Billing() {
   const planIcons: Record<string, any> = {
     free: Sparkles,
     basic: Zap,
-    professional: Crown,
-    business: Users,
+    pro: Crown,
     enterprise: Building2,
   };
 
   const planColors: Record<string, string> = {
     free: 'from-zinc-500 to-zinc-400',
     basic: 'from-blue-600 to-blue-500',
-    professional: 'from-emerald-600 to-emerald-500',
-    business: 'from-orange-600 to-orange-500',
+    pro: 'from-emerald-600 to-emerald-500',
     enterprise: 'from-violet-600 to-violet-500',
   };
 
@@ -225,7 +223,7 @@ export default function Billing() {
                   </div>
                   <div className="flex items-baseline gap-1.5 mb-2">
                     <span className="text-2xl font-black text-zinc-900 dark:text-white">{item.current}</span>
-                    <span className="text-sm font-bold text-zinc-400">/ {item.limit === 999999 ? '∞' : item.limit}</span>
+                    <span className="text-sm font-bold text-zinc-400">/ {item.limit === 999999 || item.limit === -1 ? '∞' : item.limit}</span>
                   </div>
                   <div className="h-2 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
                     <motion.div

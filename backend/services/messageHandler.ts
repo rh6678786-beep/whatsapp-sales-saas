@@ -3,6 +3,7 @@ import { generateSalesResponse } from "./aiService";
 import { Message, SalesState, Session } from "../../src/types";
 import { LeadQualificationService } from "./leadQualificationService";
 import { getSubscriptionStatus } from "./stripeService";
+import { queueMessage } from "./aiRetryQueue";
 
 interface SimulatorData {
   session: Session;
@@ -63,9 +64,9 @@ export async function processIncomingMessage(
         const { sessionsThisMonth } = await dbService.getUsageCounts(adminId);
         if (sessionsThisMonth >= plan.limits.maxSessionsPerMonth) {
           return {
-            text: `Maazrat, aapke plan ki monthly conversation limit (${
+            text: `Sorry, your plan's monthly conversation limit (${
               plan.limits.maxSessionsPerMonth
-            }) complete ho gayi hai. Message schedule kar diya gaya hai — jab aap upgrade karein ge to hum aapko turant jawab denge. 🤝`,
+            }) has been reached. Your message has been queued — we'll respond as soon as you upgrade your plan. 🤝`,
             images: [],
             videos: [],
             shouldBlockUser: false,
@@ -93,7 +94,20 @@ export async function processIncomingMessage(
     }
     session.metadata = qualifiedSession.metadata;
     
-    // 4. Generate AI Response
+    // 4. Save user message to DB first (before AI call, for queued retries)
+    const now = Date.now();
+    const userMsg: Message = {
+      sessionId: userId,
+      role: "user",
+      text: body || (mediaBase64 ? "[Media]" : "Empty Message"),
+      timestamp: new Date(now).toISOString()
+    };
+
+    if (!isSimulator) {
+      await dbService.addMessage(adminId, userId, userMsg);
+    }
+
+    // 5. Generate AI Response
     const responseText = await generateSalesResponse(
       adminId,
       session.state,
@@ -105,6 +119,18 @@ export async function processIncomingMessage(
       "Customer",
       qualifiedSession
     );
+
+    // If AI unavailable (all models failed), send fallback + queue for retry
+    if (!responseText) {
+      if (isSimulator) {
+        const simKey = `${adminId}:${userId}`;
+        const simData = simulatorStore.get(simKey);
+        if (simData) simData.messages.push(userMsg);
+        return { text: "Sorry, I'm a bit busy right now. I'll get back to you shortly!" };
+      }
+      queueMessage(adminId, userId, body, mediaBase64, mimeType);
+      return { text: "Sorry, I'm a bit busy right now. I'll get back to you shortly!" };
+    }
 
     // 6. Post-processing Actions
     let shouldBlock = false;
@@ -156,16 +182,8 @@ export async function processIncomingMessage(
       }
     }
 
-    // 7. Save Conversation
+    // 7. Save Model Response
     const cleanResponse = responseText.replace(/\[.*?\]/g, "").trim();
-    const now = Date.now();
-
-    const userMsg: Message = {
-      sessionId: userId,
-      role: "user",
-      text: body || (mediaBase64 ? "[Media]" : "Empty Message"),
-      timestamp: new Date(now).toISOString()
-    };
     const modelMsg: Message = {
       sessionId: userId,
       role: "model",
@@ -177,13 +195,11 @@ export async function processIncomingMessage(
       const simKey = `${adminId}:${userId}`;
       const simData = simulatorStore.get(simKey);
       if (simData) {
-        simData.messages.push(userMsg, modelMsg);
+        simData.messages.push(modelMsg);
         simData.session = session;
       }
     } else {
-      await dbService.addMessage(adminId, userId, userMsg);
       await dbService.addMessage(adminId, userId, modelMsg);
-      // Save each video as a separate model message with videoUrl
       if (videosToSend && videosToSend.length) {
         for (const vid of videosToSend) {
           const videoMsg = {
@@ -206,6 +222,6 @@ export async function processIncomingMessage(
     };
   } catch (error: any) {
     console.error(`[HANDLER ERROR][${adminId}]`, error.message);
-    return { text: "Maazrat, abhi ek technical issue aa gaya — thodi der mein bilkul theek ho jaye ga. Aap message dobara bhejein ya do minute baad try karein. 😊" };
+    return { text: "Sorry, there was a temporary technical issue. Please try again in a moment. 😊" };
   }
 }
