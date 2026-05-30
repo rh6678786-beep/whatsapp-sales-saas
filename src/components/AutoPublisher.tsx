@@ -4,9 +4,11 @@ import axios from 'axios';
 import { 
   Megaphone, Sparkles, Image, Video, Calendar, Clock, 
   Send, CheckCircle, XCircle, Loader2, AlertCircle, 
-  History, Info, RefreshCw, Smartphone, Facebook, Instagram
+  History, Info, RefreshCw, Smartphone, Facebook, Instagram,
+  Package, ChevronDown, Wand2
 } from 'lucide-react';
 import { TelegramIcon, WhatsAppIcon } from './channelIcons';
+import { Product } from '../types';
 
 interface PublishHistoryItem {
   id: string;
@@ -24,6 +26,11 @@ export default function AutoPublisher() {
   const [content, setContent] = useState('');
   const [mediaUrl, setMediaUrl] = useState('');
   const [mediaType, setMediaType] = useState<'image' | 'video' | 'none'>('none');
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [mediaSource, setMediaSource] = useState<'manual' | 'ai-generate'>('manual');
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
   const [selectedPlatforms, setSelectedPlatforms] = useState<Record<string, boolean>>({
     whatsapp: false,
     telegram: false,
@@ -41,9 +48,27 @@ export default function AutoPublisher() {
   const [history, setHistory] = useState<PublishHistoryItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
 
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
+  const [isGeneratingProductPost, setIsGeneratingProductPost] = useState(false);
+
   useEffect(() => {
     fetchHistory();
+    fetchProducts();
   }, []);
+
+  const fetchProducts = async () => {
+    setIsLoadingProducts(true);
+    try {
+      const res = await axios.get('/api/products?page=1&limit=500');
+      setProducts(res.data.products || []);
+    } catch (err) {
+      console.error('Failed to fetch products', err);
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
 
   const fetchHistory = async () => {
     setIsLoadingHistory(true);
@@ -121,9 +146,11 @@ export default function AutoPublisher() {
         setContent('');
         setMediaUrl('');
         setMediaType('none');
+        setMediaFile(null);
         setIsScheduled(false);
         setScheduledDate('');
         setScheduledTime('');
+        setSelectedProductId('');
         setSelectedPlatforms({
           whatsapp: false,
           telegram: false,
@@ -146,6 +173,82 @@ export default function AutoPublisher() {
       ...prev,
       [platform]: !prev[platform]
     }));
+  };
+
+  const handleMediaFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setMediaFile(file);
+    setIsUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('files', file);
+      const res = await axios.post('/api/upload', formData);
+      const uploadedUrl = res.data?.urls?.[0];
+      if (uploadedUrl) {
+        setMediaUrl(uploadedUrl);
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.response?.data?.error || 'Failed to upload media file' });
+      setMediaType('none');
+      setMediaFile(null);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleGenerateProductPost = async () => {
+    if (!selectedProductId) {
+      setMessage({ type: 'error', text: 'Please select a product first!' });
+      return;
+    }
+    setIsGeneratingProductPost(true);
+    setMessage(null);
+    try {
+      const res = await axios.post('/api/publish/generate-product-post', { productId: selectedProductId });
+      if (res.data?.success) {
+        setContent(res.data.content || '');
+        if (res.data.mediaUrl) {
+          setMediaUrl(res.data.mediaUrl);
+          setMediaType('image');
+        }
+        setMessage({ type: 'success', text: 'AI-generated product post is ready! Review and publish.' });
+      } else {
+        setMessage({ type: 'error', text: res.data?.error || 'Failed to generate product post' });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.response?.data?.error || 'Failed to generate product post' });
+    } finally {
+      setIsGeneratingProductPost(false);
+    }
+  };
+
+  const handleAiGenerate = async () => {
+    if (!aiPrompt.trim()) {
+      setMessage({ type: 'error', text: 'Please describe what image you want to generate!' });
+      return;
+    }
+    setIsGenerating(true);
+    setMessage(null);
+    try {
+      const res = await axios.post('/api/publish/generate-media', {
+        prompt: aiPrompt,
+        mediaType: 'image',
+      });
+      if (res.data?.success && res.data?.url) {
+        setMediaUrl(res.data.url);
+        setMediaType('image');
+        setMessage({ type: 'success', text: 'AI-generated image is ready!' });
+      } else {
+        setMessage({ type: 'error', text: res.data?.error || 'Failed to generate image. Try a more detailed description.' });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err?.response?.data?.error || 'Failed to generate media via AI' });
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   return (
@@ -211,6 +314,60 @@ export default function AutoPublisher() {
               </div>
             </div>
 
+            {/* Product Post Generator */}
+            <div className="space-y-3">
+              <label className="text-xs font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block">
+                Generate Post from Product
+              </label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <select
+                    value={selectedProductId}
+                    onChange={e => setSelectedProductId(e.target.value)}
+                    className="w-full appearance-none bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-100 dark:border-zinc-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 rounded-2xl px-4 py-3 text-sm font-bold text-zinc-900 dark:text-white outline-none transition-all cursor-pointer"
+                  >
+                    <option value="">{isLoadingProducts ? 'Loading products...' : 'Select a product...'}</option>
+                    {products.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} — Rs. {p.price}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 pointer-events-none" />
+                </div>
+                <motion.button
+                  type="button"
+                  onClick={handleGenerateProductPost}
+                  disabled={isGeneratingProductPost || !selectedProductId}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="px-5 py-3 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-2xl text-xs font-black shadow-lg shadow-violet-500/20 transition-all flex items-center gap-2 disabled:opacity-50 shrink-0"
+                >
+                  {isGeneratingProductPost ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                  {isGeneratingProductPost ? 'Generating...' : 'Generate Post'}
+                </motion.button>
+              </div>
+              {selectedProductId && (() => {
+                const p = products.find(x => x.id === selectedProductId);
+                if (!p) return null;
+                return (
+                  <div className="flex items-center gap-3 p-3 bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl">
+                    {p.images?.[0] ? (
+                      <img src={p.images[0]} alt={p.name} className="w-12 h-12 rounded-xl object-cover shrink-0" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-xl bg-zinc-200 dark:bg-zinc-800 flex items-center justify-center shrink-0">
+                        <Package className="w-5 h-5 text-zinc-400" />
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-zinc-800 dark:text-zinc-200 truncate">{p.name}</p>
+                      <p className="text-xs font-bold text-zinc-400">Rs. {p.price} · {p.features?.length || 0} features</p>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
             {/* Post text content */}
             <div className="space-y-2">
               <div className="flex justify-between items-center">
@@ -243,50 +400,186 @@ export default function AutoPublisher() {
               <label className="text-xs font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest block">
                 Attach Media (Reels / Post Media)
               </label>
-              <div className="flex gap-2">
-                {[
-                  { id: 'none', label: 'No Media', icon: Info },
-                  { id: 'image', label: 'Image URL', icon: Image },
-                  { id: 'video', label: 'Video URL (Reels)', icon: Video }
-                ].map(type => {
-                  const isSel = mediaType === type.id;
-                  const Icon = type.icon;
-                  return (
-                    <button
-                      key={type.id}
-                      type="button"
-                      onClick={() => setMediaType(type.id as any)}
-                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all ${
-                        isSel 
-                          ? 'bg-zinc-900 dark:bg-zinc-800 text-white border-zinc-900 dark:border-zinc-700' 
-                          : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:bg-zinc-100'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                      {type.label}
-                    </button>
-                  );
-                })}
+
+              {/* Media source toggle */}
+              <div className="flex gap-2 mb-1">
+                <button
+                  type="button"
+                  onClick={() => { setMediaSource('manual'); setMediaType('none'); setMediaUrl(''); setMediaFile(null); }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all ${
+                    mediaSource === 'manual'
+                      ? 'bg-zinc-900 dark:bg-zinc-800 text-white border-zinc-900 dark:border-zinc-700'
+                      : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:bg-zinc-100'
+                  }`}
+                >
+                  <Image className="w-3.5 h-3.5" />
+                  Manual Upload
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMediaSource('ai-generate'); setMediaType('none'); setMediaUrl(''); setMediaFile(null); setAiPrompt(''); }}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all ${
+                    mediaSource === 'ai-generate'
+                      ? 'bg-zinc-900 dark:bg-zinc-800 text-white border-zinc-900 dark:border-zinc-700'
+                      : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:bg-zinc-100'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  AI Generate
+                </button>
               </div>
 
+              <AnimatePresence mode="wait">
+                {mediaSource === 'manual' && (
+                  <motion.div
+                    key="manual"
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -5 }}
+                    className="space-y-3"
+                  >
+                    <div className="flex gap-2">
+                      {[
+                        { id: 'none', label: 'No Media', icon: Info },
+                        { id: 'image', label: 'Image', icon: Image },
+                        { id: 'video', label: 'Video', icon: Video }
+                      ].map(type => {
+                        const isSel = mediaType === type.id;
+                        const Icon = type.icon;
+                        return (
+                          <button
+                            key={type.id}
+                            type="button"
+                            onClick={() => {
+                              if (type.id === 'none') {
+                                setMediaType('none');
+                                setMediaUrl('');
+                                setMediaFile(null);
+                              } else {
+                                setMediaType(type.id as any);
+                                document.getElementById(`media-upload-${type.id}`)?.click();
+                              }
+                            }}
+                            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all ${
+                              isSel 
+                                ? 'bg-zinc-900 dark:bg-zinc-800 text-white border-zinc-900 dark:border-zinc-700' 
+                                : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:bg-zinc-100'
+                            }`}
+                          >
+                            <Icon className="w-3.5 h-3.5" />
+                            {type.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <input
+                      id="media-upload-image"
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleMediaFileChange}
+                    />
+                    <input
+                      id="media-upload-video"
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={handleMediaFileChange}
+                    />
+
+                    {isUploading && (
+                      <div className="flex items-center gap-3 p-4 bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-100 dark:border-zinc-800 rounded-2xl">
+                        <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+                        <span className="text-sm font-bold text-zinc-500">Uploading media...</span>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+
+                {mediaSource === 'ai-generate' && (
+                  <motion.div
+                    key="ai-generate"
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -5 }}
+                    className="space-y-3"
+                  >
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setMediaType('image')}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border text-xs font-bold transition-all ${
+                          mediaType === 'image'
+                            ? 'bg-zinc-900 dark:bg-zinc-800 text-white border-zinc-900 dark:border-zinc-700'
+                            : 'bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:bg-zinc-100'
+                        }`}
+                      >
+                        <Image className="w-3.5 h-3.5" />
+                        Generate Image
+                      </button>
+                      <button
+                        type="button"
+                        disabled
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-xl border text-xs font-bold bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed opacity-60"
+                        title="Video generation coming soon"
+                      >
+                        <Video className="w-3.5 h-3.5" />
+                        Generate Video (Soon)
+                      </button>
+                    </div>
+
+                    <textarea
+                      value={aiPrompt}
+                      onChange={e => setAiPrompt(e.target.value)}
+                      placeholder="Describe the image you want to generate... e.g. 'A professional product photo of a premium leather bag on a wooden table with natural lighting'"
+                      rows={3}
+                      className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-100 dark:border-zinc-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 rounded-2xl p-4 text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 outline-none transition-all"
+                    />
+
+                    <motion.button
+                      type="button"
+                      onClick={handleAiGenerate}
+                      disabled={isGenerating || !aiPrompt.trim()}
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.99 }}
+                      className="w-full py-3 bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-2xl text-xs font-black shadow-lg shadow-violet-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {isGenerating ? 'Generating with AI...' : 'Generate Image with AI'}
+                    </motion.button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Media preview (shared for both modes) */}
               <AnimatePresence>
-                {mediaType !== 'none' && (
+                {mediaUrl && (
                   <motion.div
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden space-y-2 pt-1"
+                    className="overflow-hidden"
                   >
-                    <input
-                      type="url"
-                      value={mediaUrl}
-                      onChange={e => setMediaUrl(e.target.value)}
-                      placeholder={`Enter public HTTPS URL of the ${mediaType}...`}
-                      className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-100 dark:border-zinc-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 rounded-2xl px-4 py-3 text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 outline-none transition-all"
-                    />
-                    <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-medium">
-                      💡 Ensure the URL is public and ends with standard extension (.jpg, .png, .mp4) or points directly to a CDN file.
-                    </p>
+                    <div className="relative mt-2">
+                      {mediaType === 'image' ? (
+                        <img src={mediaUrl} alt="Media" className="w-full max-h-48 object-contain rounded-2xl border border-zinc-200 dark:border-zinc-800" />
+                      ) : (
+                        <video src={mediaUrl} controls className="w-full max-h-48 rounded-2xl border border-zinc-200 dark:border-zinc-800" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMediaType('none');
+                          setMediaUrl('');
+                          setMediaFile(null);
+                          setAiPrompt('');
+                        }}
+                        className="absolute top-2 right-2 w-7 h-7 bg-zinc-900/70 text-white rounded-full flex items-center justify-center hover:bg-zinc-900 transition-all"
+                      >
+                        <XCircle className="w-4 h-4" />
+                      </button>
+                    </div>
                   </motion.div>
                 )}
               </AnimatePresence>
