@@ -1,36 +1,32 @@
-# ============================================
-# Stage 1: Build frontend
-# ============================================
-FROM node:20-alpine AS builder
+FROM node:20-alpine
+
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN apk add --no-cache \
+  python3 \
+  make \
+  g++ \
+  chromium \
+  nss \
+  freetype \
+  freetype-dev \
+  harfbuzz \
+  ca-certificates \
+  ttf-freefont
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY prisma ./prisma
+RUN npx prisma generate
 
 COPY . .
+
 RUN npm run build
-
-# ============================================
-# Stage 2: Production server
-# ============================================
-FROM node:20-alpine AS runner
-WORKDIR /app
-
-# Install only production deps
-COPY package*.json ./
-RUN npm ci --production --ignore-scripts
-
-# Copy built frontend + backend source
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/backend ./backend
-COPY --from=builder /app/server.ts ./
-COPY --from=builder /app/tsconfig.json ./
-
-# whatsapp-web.js needs Chromium
-RUN apk add --no-cache chromium
-ENV CHROMIUM_PATH=/usr/bin/chromium-browser
 
 EXPOSE 3000
 
-ENV NODE_ENV=production
-CMD ["node_modules/.bin/tsx", "server.ts"]
+CMD ["npm", "run", "start"]

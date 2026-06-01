@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Product } from '../types';
-import { Plus, Trash2, Edit2, Package, Banknote, ListChecks, X, Sparkles, ShoppingBag, Save, ChevronLeft, ChevronRight } from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import { Plus, Trash2, Edit2, Package, Banknote, ListChecks, X, Sparkles, ShoppingBag, Save, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { TableSkeleton } from './Skeleton';
+import Pagination from './Pagination';
+import SearchBar from './SearchBar';
 
 const MediaSlideshow = ({ images = [], videos = [], name }: { images?: string[], videos?: string[], name: string }) => {
   const media = [...(videos || []), ...(images || [])];
@@ -23,9 +27,9 @@ const MediaSlideshow = ({ images = [], videos = [], name }: { images?: string[],
     return (
       <div className="w-full h-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
         <Package className="w-12 h-12 text-zinc-300" />
-      </div>
-    );
-  }
+    </div>
+  );
+}
 
   const isVideo = currentIndex < (videos?.length || 0);
 
@@ -115,32 +119,56 @@ export default function ProductManager() {
   const [featureInput, setFeatureInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [stockFilter, setStockFilter] = useState<'all' | 'inStock' | 'outOfStock'>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const LIMIT = 20;
 
-  const fetchProducts = async (p?: number) => {
+  const fetchProducts = async (p?: number, searchTerm?: string, stock?: string) => {
     try {
+      setLoading(true);
       setFetchError(null);
       const pageNum = p ?? page;
-      const res = await axios.get(`/api/products?page=${pageNum}&limit=${LIMIT}`);
+      const term = searchTerm ?? debouncedSearch;
+      const s = stock ?? stockFilter;
+      const res = await axios.get(`/api/products?page=${pageNum}&pageSize=${LIMIT}${term ? `&search=${encodeURIComponent(term)}` : ''}`);
       const data = res.data;
-      if (!data.products) {
+      if (!data.data) {
         setFetchError('Invalid response from server');
         return;
       }
-      setProducts(data.products);
-      setTotal(data.total);
-      setTotalPages(data.totalPages);
+      let products = data.data;
+      if (s === 'inStock') {
+        products = products.filter((pr: Product) => (pr as any).stock === undefined || (pr as any).stock > 0);
+      } else if (s === 'outOfStock') {
+        products = products.filter((pr: Product) => (pr as any).stock === 0);
+      }
+      setProducts(products);
+      setTotal(data.pagination?.total ?? data.total);
+      setTotalPages(data.pagination?.totalPages ?? data.totalPages);
     } catch (err: any) {
       setFetchError(err?.response?.data?.error || err.message || 'Failed to fetch products');
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchProducts(page);
-  }, [page]);
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    fetchProducts(page, debouncedSearch, stockFilter);
+  }, [page, debouncedSearch, stockFilter]);
 
   const goToPage = (p: number) => {
     if (p >= 1 && p <= totalPages) setPage(p);
@@ -211,6 +239,35 @@ export default function ProductManager() {
     }
   };
 
+  const handleBatchDelete = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedIds.size} products? This will permanently remove them from the AI catalog.`)) return;
+    try {
+      await axios.delete('/api/products/batch', { data: { ids: Array.from(selectedIds) } });
+      setSelectedIds(new Set());
+      const nextPage = products.length === selectedIds.size && page > 1 ? page - 1 : page;
+      setPage(nextPage);
+      fetchProducts(nextPage);
+    } catch (err) {
+      console.error('Failed to batch delete products:', err);
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === products.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(products.map(p => p.id)));
+    }
+  };
+
   return (
     <div className="p-8 max-w-7xl mx-auto space-y-12">
       
@@ -235,18 +292,65 @@ export default function ProductManager() {
           </p>
         </div>
 
-        <button 
-          onClick={openAddModal}
-          className="group relative px-8 py-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl font-black transition-all hover:scale-105 active:scale-95 shadow-xl flex items-center gap-3 overflow-hidden"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-emerald-400/20 to-blue-400/20 opacity-0 group-hover:opacity-100 transition-opacity" />
-          <Plus className="w-5 h-5 relative z-10" /> 
-          <span className="relative z-10">Add New Product</span>
-        </button>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+          <div className="min-w-[200px] sm:min-w-[260px]">
+            <SearchBar value={search} onChange={setSearch} placeholder="Search products..." />
+          </div>
+          <button 
+            onClick={openAddModal}
+            className="group relative px-8 py-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl font-black transition-all hover:scale-105 active:scale-95 shadow-xl flex items-center gap-3 overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-gradient-to-r from-emerald-400/20 to-blue-400/20 opacity-0 group-hover:opacity-100 transition-opacity" />
+            <Plus className="w-5 h-5 relative z-10" /> 
+            <span className="relative z-10">Add New Product</span>
+          </button>
+          <button 
+            onClick={() => window.location.hash = '#/bulk-import'}
+            className="group relative px-6 py-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-2xl font-bold transition-all hover:scale-105 active:scale-95 shadow-md flex items-center gap-3 overflow-hidden"
+          >
+            <Upload className="w-5 h-5 relative z-10" /> 
+            <span className="relative z-10">Bulk Import</span>
+          </button>
+        </div>
       </div>
 
+      {/* Selection & Filter Controls */}
+      <div className="flex items-center justify-between -mt-4">
+        <div className="flex items-center gap-2">
+          {products.length > 0 && (
+            <label className="flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-zinc-800 rounded-xl cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
+              <input
+                type="checkbox"
+                checked={products.length > 0 && selectedIds.size === products.length}
+                onChange={toggleSelectAll}
+                className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
+              />
+              <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">Select All</span>
+            </label>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {(['all', 'inStock', 'outOfStock'] as const).map((option) => (
+          <button
+            key={option}
+            onClick={() => { setStockFilter(option); setPage(1); }}
+            className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${
+              stockFilter === option
+                ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-lg'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+            }`}
+          >
+            {option === 'all' ? 'All' : option === 'inStock' ? 'In Stock' : 'Out of Stock'}
+          </button>
+        ))}
+        </div>
+      </div>
+
+      {/* Loading State */}
+      {loading && <TableSkeleton rows={8} cols={4} />}
+
       {/* Grid Layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      {!loading && <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         <AnimatePresence mode="popLayout">
           {products.map((product) => (
             <motion.div
@@ -263,6 +367,17 @@ export default function ProductManager() {
                 
                 {/* Glossy Overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-zinc-900/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+
+                {/* Selection checkbox */}
+                <div className="absolute top-4 left-4 z-30">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(product.id)}
+                    onChange={() => toggleSelect(product.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="w-5 h-5 rounded-lg border-zinc-300 dark:border-zinc-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
+                  />
+                </div>
 
                 {/* Quick Actions overlay */}
                 <div className="absolute top-4 right-4 flex gap-2 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-300 z-30">
@@ -313,43 +428,10 @@ export default function ProductManager() {
             </motion.div>
           ))}
         </AnimatePresence>
-      </div>
+      </div>}
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-3 mt-8">
-          <button
-            onClick={() => goToPage(page - 1)}
-            disabled={page <= 1}
-            className="p-3 rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-all active:scale-90"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              onClick={() => goToPage(p)}
-              className={`w-10 h-10 rounded-2xl font-bold text-sm transition-all active:scale-90 ${
-                p === page
-                  ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-lg'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-              }`}
-            >
-              {p}
-            </button>
-          ))}
-          <button
-            onClick={() => goToPage(page + 1)}
-            disabled={page >= totalPages}
-            className="p-3 rounded-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-all active:scale-90"
-          >
-            <ChevronRight className="w-5 h-5" />
-          </button>
-          <span className="text-sm text-zinc-400 ml-2 font-medium">
-            {total} total
-          </span>
-        </div>
-      )}
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
       {/* Product Modal Overlay */}
       <AnimatePresence>
@@ -611,6 +693,16 @@ export default function ProductManager() {
           </div>
           <p className="font-bold text-lg">No products found in catalog.</p>
           <button onClick={openAddModal} className="text-blue-500 font-black hover:underline">Add your first product</button>
+        </div>
+      )}
+
+      {/* Floating Batch Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl px-5 py-3 shadow-2xl flex items-center gap-4 z-50">
+          <span className="text-sm font-bold">{selectedIds.size} selected</span>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-zinc-400 dark:text-zinc-500 hover:text-white dark:hover:text-zinc-900 transition-colors">Cancel</button>
+          <div className="w-px h-5 bg-zinc-700 dark:bg-zinc-300" />
+          <button onClick={handleBatchDelete} className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-black hover:bg-red-600 transition-colors">Delete Selected</button>
         </div>
       )}
 

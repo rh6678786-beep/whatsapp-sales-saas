@@ -9,9 +9,9 @@ import {
   Activity, Bell, Gift, Infinity, Lock, Mail, Phone, HelpCircle,
   Store,
 } from 'lucide-react';
-import ChatWidget from './ChatWidget';
 
-type Props = { onGetStarted?: () => void; onLogin?: () => void };
+
+type Props = { onGetStarted?: () => void; onLogin?: () => void; onTeamLogin?: () => void };
 
 const GradientText = ({ children, className = '' }: { children: React.ReactNode; className?: string }) => (
   <span className={`bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent ${className}`}>{children}</span>
@@ -90,12 +90,35 @@ function TypeWriter({ texts, speed = 40 }: { texts: string[]; speed?: number }) 
   return <span>{displayed}<motion.span animate={{ opacity: [1, 0] }} transition={{ repeat: 999999, duration: 0.8 }}>|</motion.span></span>;
 }
 
-export default function LandingPage({ onGetStarted, onLogin }: Props) {
+export default function LandingPage({ onGetStarted, onLogin, onTeamLogin }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const [activeDemoMsg, setActiveDemoMsg] = useState(0);
   const [toast, setToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
+
+  useEffect(() => {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === 'theme') {
+        if (e.newValue === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, []);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 50);
@@ -144,13 +167,13 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
   ];
 
   return (
-    <div className="bg-white text-zinc-900 font-sans overflow-hidden">
+    <div className="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 font-sans overflow-hidden">
       {/* ========== NAVBAR ========== */}
       <motion.nav
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.6 }}
-        className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-2xl border-b border-zinc-100 shadow-lg shadow-black/5 transition-all duration-500"
+        className="fixed top-0 left-0 right-0 z-50 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-2xl border-b border-zinc-100 dark:border-zinc-800 shadow-lg shadow-black/5 transition-all duration-500"
       >
         <div className="max-w-7xl mx-auto px-6 sm:px-8 flex items-center justify-between h-20 sm:h-24">
           <button onClick={() => scrollTo('hero')} className="flex items-center gap-3 group cursor-pointer">
@@ -160,14 +183,14 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
             >
               <Rocket className="w-6 h-6 text-white" />
             </motion.div>
-            <span className="font-black text-2xl tracking-tight text-zinc-900">SaaS<span className="text-emerald-500">Closer</span></span>
+            <span className="font-black text-2xl tracking-tight text-zinc-900 dark:text-zinc-100 dark:text-white">SaaS<span className="text-emerald-500">Closer</span></span>
           </button>
           <div className="hidden md:flex items-center gap-12">
             {['Features', 'Pricing', 'Demo'].map(item => (
               <button
                 key={item}
                 onClick={() => scrollTo(item.toLowerCase())}
-                className="relative text-[17px] font-bold text-zinc-600 hover:text-zinc-900 transition-colors group"
+                className="relative text-[17px] font-bold text-zinc-600 dark:text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:text-zinc-100 dark:hover:text-white transition-colors group"
               >
                 {item}
                 <span className="absolute -bottom-1.5 left-0 w-0 h-[3px] bg-emerald-500 rounded-full group-hover:w-full transition-all duration-300" />
@@ -176,9 +199,16 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           </div>
           <div className="hidden md:flex items-center gap-5">
             <motion.button
+              onClick={onTeamLogin}
+              whileHover={{ scale: 1.03 }}
+              className="px-4 py-3 text-[14px] font-bold text-violet-600 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300 transition-colors relative group rounded-xl"
+            >
+              Team Login
+            </motion.button>
+            <motion.button
               onClick={onLogin}
               whileHover={{ scale: 1.03 }}
-              className="px-6 py-3 text-[16px] font-bold text-zinc-600 hover:text-zinc-900 transition-colors relative group rounded-xl"
+              className="px-6 py-3 text-[16px] font-bold text-zinc-600 dark:text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:text-zinc-100 dark:hover:text-white transition-colors relative group rounded-xl"
             >
               Login
               <span className="absolute inset-0 rounded-xl bg-black/0 group-hover:bg-zinc-100 transition-colors" />
@@ -200,7 +230,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               />
             </motion.button>
           </div>
-          <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden p-2.5 text-zinc-500">
+          <button onClick={() => setMenuOpen(!menuOpen)} className="md:hidden p-2.5 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">
             {menuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
         </div>
@@ -210,16 +240,17 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
               exit={{ opacity: 0, height: 0 }}
-              className="md:hidden bg-white/95 backdrop-blur-2xl border-b border-zinc-100 overflow-hidden"
+              className="md:hidden bg-white/95 dark:bg-zinc-950/95 backdrop-blur-2xl border-b border-zinc-100 dark:border-zinc-800 overflow-hidden"
             >
               <div className="px-6 py-5 space-y-3">
                 {['Features', 'Pricing', 'Demo'].map(item => (
-                  <button key={item} onClick={() => scrollTo(item.toLowerCase())} className="block w-full text-left py-2.5 text-base font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">
+                  <button key={item} onClick={() => scrollTo(item.toLowerCase())} className="block w-full text-left py-2.5 text-base font-semibold text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:text-zinc-100 dark:hover:text-white transition-colors">
                     {item}
                   </button>
                 ))}
-                <div className="pt-4 border-t border-zinc-100 space-y-3">
-                  <button onClick={onLogin} className="block w-full text-left py-2.5 text-base font-semibold text-zinc-500 hover:text-zinc-900">Login</button>
+                <div className="pt-4 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
+                  <button onClick={onTeamLogin} className="block w-full text-left py-2.5 text-base font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-300">Team Login</button>
+                  <button onClick={onLogin} className="block w-full text-left py-2.5 text-base font-semibold text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:text-zinc-100 dark:hover:text-white">Login</button>
                   <button onClick={onGetStarted} className="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white rounded-xl font-bold text-base shadow-lg shadow-emerald-500/30">Start Free Trial</button>
                 </div>
               </div>
@@ -251,10 +282,10 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               >
                 <Sparkles className="w-3.5 h-3.5" /> AI-POWERED SALES AUTOMATION
               </motion.div>
-              <h1 className="text-4xl sm:text-5xl lg:text-7xl font-black leading-[1.02] tracking-tight text-zinc-900">
+              <h1 className="text-4xl sm:text-5xl lg:text-7xl font-black leading-[1.02] tracking-tight text-zinc-900 dark:text-zinc-100">
                 <GradientText>Your AI Sales Agent</GradientText>
                 <br />for{' '}
-                <span className="text-zinc-900 relative">
+                <span className="text-zinc-900 dark:text-zinc-100 relative">
                   WhatsApp
                   <motion.span
                     className="absolute -bottom-2 left-0 h-1 bg-gradient-to-r from-emerald-500 to-transparent rounded-full"
@@ -264,7 +295,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   />
                 </span>
               </h1>
-              <p className="mt-5 text-base sm:text-lg text-zinc-500 leading-relaxed max-w-lg">
+              <p className="mt-5 text-base sm:text-lg text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 leading-relaxed max-w-lg">
                 Automate customer replies, negotiate prices, verify payments, and close orders automatically — all inside WhatsApp using AI.
               </p>
 
@@ -273,14 +304,14 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.8, duration: 0.5 }}
-                className="mt-6 flex items-center gap-3 bg-zinc-50 rounded-2xl px-5 py-3 border border-zinc-100 max-w-md"
+                className="mt-6 flex items-center gap-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-2xl px-5 py-3 border border-zinc-100 dark:border-zinc-800 max-w-md"
               >
                 <motion.div
                   animate={{ scale: [1, 1.2, 1] }}
                   transition={{ repeat: 999999, duration: 2 }}
                   className="w-2 h-2 bg-emerald-500 rounded-full flex-shrink-0"
                 />
-                <span className="text-sm text-zinc-600">
+                <span className="text-sm text-zinc-600 dark:text-zinc-400 dark:text-zinc-500">
                   <TypeWriter texts={[
                     '👋 Hi! Welcome to our store!',
                     '🔥 Special discount available today!',
@@ -311,7 +342,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   whileHover={{ scale: 1.04 }}
                   whileTap={{ scale: 0.96 }}
                   onClick={() => scrollTo('demo')}
-                  className="px-7 py-4 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 rounded-2xl font-bold text-sm border border-zinc-200 hover:border-zinc-300 transition-all flex items-center gap-2"
+                  className="px-7 py-4 bg-zinc-50 dark:bg-zinc-800/50 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-2xl font-bold text-sm border border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 transition-all flex items-center gap-2"
                 >
                   <Play className="w-4 h-4" /> Watch Demo
                 </motion.button>
@@ -321,7 +352,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ delay: 1.2, duration: 0.8 }}
-                className="mt-6 flex items-center gap-4 text-xs text-zinc-400"
+                className="mt-6 flex items-center gap-4 text-xs text-zinc-400 dark:text-zinc-500"
               >
                 <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> No credit card</span>
                 <span className="flex items-center gap-1"><CheckCircle className="w-3.5 h-3.5 text-emerald-500" /> 5-min setup</span>
@@ -339,7 +370,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               <motion.div className="relative w-full max-w-[280px] mx-auto">
                 <div className="aspect-[9/19] bg-gradient-to-b from-emerald-50 to-zinc-50 rounded-[2rem] shadow-2xl shadow-emerald-500/10 border border-emerald-100 overflow-hidden">
                   <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/3 h-5 bg-zinc-100 rounded-b-2xl z-10" />
-                  <div className="absolute inset-2 rounded-[1.75rem] bg-white overflow-hidden">
+                  <div className="absolute inset-2 rounded-[1.75rem] bg-white dark:bg-zinc-900 overflow-hidden">
                     <div className="bg-gradient-to-r from-emerald-600 to-emerald-700 px-4 py-3 flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center"><Bot className="w-4 h-4 text-white" /></div>
                       <div className="flex-1">
@@ -404,7 +435,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                               m.highlight
                                 ? 'text-emerald-700 font-medium'
                                 : m.side === 'left'
-                                  ? 'text-zinc-700'
+                                  ? 'text-zinc-700 dark:text-zinc-300 dark:text-zinc-600'
                                   : 'text-white'
                             }`}>
                               {m.text}
@@ -467,13 +498,13 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.1 }}
-              className="relative bg-white p-6 sm:p-8 text-center group hover:bg-emerald-50/30 transition-colors"
+              className="relative bg-white dark:bg-zinc-900 p-6 sm:p-8 text-center group hover:bg-emerald-50/30 dark:hover:bg-emerald-950/30 transition-colors"
             >
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/20 group-hover:scale-110 transition-transform">
                 <stat.icon className="w-6 h-6 text-white" />
               </div>
-              <div className="text-2xl sm:text-3xl font-black text-zinc-900 mb-1">{stat.value}</div>
-              <div className="text-xs text-zinc-500 font-medium">{stat.label}</div>
+              <div className="text-2xl sm:text-3xl font-black text-zinc-900 dark:text-zinc-100 mb-1">{stat.value}</div>
+              <div className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 font-medium">{stat.label}</div>
             </motion.div>
           ))}
         </motion.div>
@@ -485,7 +516,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={{ once: true }}
-          className="text-center text-[10px] font-bold text-zinc-400 uppercase tracking-[4px] mb-8"
+          className="text-center text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-[4px] mb-8"
         >
           Trusted by modern ecommerce brands worldwide
         </motion.p>
@@ -503,7 +534,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               viewport={{ once: true }}
               transition={{ delay: i * 0.1 }}
               whileHover={{ scale: 1.05, opacity: 0.6 }}
-              className="text-lg sm:text-xl font-black text-zinc-300 tracking-tight cursor-default transition-all"
+              className="text-lg sm:text-xl font-black text-zinc-300 dark:text-zinc-600 tracking-tight cursor-default transition-all"
             >
               {b}
             </motion.span>
@@ -528,13 +559,13 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           >
             <Zap className="w-3.5 h-3.5" /> POWERFUL FEATURES
           </motion.div>
-          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Everything You Need to{' '}
             <span className="bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent">
               Sell on Auto-Pilot
             </span>
           </h2>
-          <p className="mt-3 text-zinc-500 text-sm max-w-lg mx-auto">
+          <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm max-w-lg mx-auto">
             From intelligent conversations to payment verification — let AI handle the heavy lifting.
           </p>
         </motion.div>
@@ -547,14 +578,14 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               viewport={{ once: true }}
               transition={{ delay: i * 0.05 }}
               whileHover={{ y: -6 }}
-              className="relative p-6 bg-white rounded-2xl border border-zinc-100 hover:border-emerald-100 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 group"
+              className="relative p-6 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-100 dark:border-zinc-800 hover:border-emerald-100 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 group"
             >
               <div className="absolute inset-0 bg-gradient-to-br from-emerald-50/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none rounded-2xl" />
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center mb-4 shadow-lg shadow-emerald-500/20 group-hover:scale-110 transition-transform duration-300">
                 <f.icon className="w-5.5 h-5.5 text-white" />
               </div>
-              <h3 className="text-base font-bold text-zinc-900 mb-1.5">{f.title}</h3>
-              <p className="text-xs text-zinc-500 leading-relaxed">{f.desc}</p>
+              <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100 mb-1.5">{f.title}</h3>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 leading-relaxed">{f.desc}</p>
             </motion.div>
           ))}
         </div>
@@ -581,10 +612,10 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               >
                 <MessageSquare className="w-3.5 h-3.5" /> LIVE AI DEMO
               </motion.div>
-              <h2 className="text-3xl sm:text-4xl font-black tracking-tight leading-tight text-zinc-900">
+              <h2 className="text-3xl sm:text-4xl font-black tracking-tight leading-tight text-zinc-900 dark:text-zinc-100">
                 See How AI <GradientText>Closes Deals</GradientText> in Real-Time
               </h2>
-              <p className="mt-3 text-zinc-500 text-sm max-w-md">
+              <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm max-w-md">
                 Watch how our AI agent handles customer inquiries, negotiates prices, and closes orders automatically.
               </p>
 
@@ -593,9 +624,9 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: 0.2 }}
-                className="mt-6 bg-white rounded-2xl p-5 border border-zinc-200 overflow-hidden shadow-sm"
+                className="mt-6 bg-white dark:bg-zinc-900 rounded-2xl p-5 border border-zinc-200 dark:border-zinc-700 overflow-hidden shadow-sm"
               >
-                <div className="flex items-center gap-2 mb-4 text-xs text-zinc-500 font-medium">
+                <div className="flex items-center gap-2 mb-4 text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 font-medium">
                   <motion.div
                     animate={{ scale: [1, 1.3, 1] }}
                     transition={{ repeat: 999999, duration: 1.5 }}
@@ -615,23 +646,23 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                       demoMessages[activeDemoMsg].icon === 'bot'
                         ? 'bg-emerald-50 border border-emerald-200'
-                        : 'bg-zinc-100 border border-zinc-200'
+                        : 'bg-zinc-100 border border-zinc-200 dark:border-zinc-700'
                     }`}>
                       {demoMessages[activeDemoMsg].icon === 'bot' ? (
                         <Bot className="w-4 h-4 text-emerald-600" />
                       ) : (
-                        <Users className="w-4 h-4 text-zinc-500" />
+                        <Users className="w-4 h-4 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500" />
                       )}
                     </div>
                     <div className={`max-w-[75%] rounded-2xl px-4 py-3 ${
                       demoMessages[activeDemoMsg].side === 'right'
                         ? 'bg-emerald-50 border border-emerald-200 rounded-tr-sm'
-                        : 'bg-zinc-100 border border-zinc-200 rounded-tl-sm'
+                        : 'bg-zinc-100 border border-zinc-200 dark:border-zinc-700 rounded-tl-sm'
                     }`}>
                       <p className={`text-sm ${
                         demoMessages[activeDemoMsg].icon === 'bot'
                           ? 'text-emerald-700 font-medium'
-                          : 'text-zinc-700'
+                          : 'text-zinc-700 dark:text-zinc-300 dark:text-zinc-600'
                       }`}>
                         {demoMessages[activeDemoMsg].text}
                       </p>
@@ -664,13 +695,13 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   viewport={{ once: true }}
                   transition={{ delay: i * 0.1 }}
                   whileHover={{ x: 4 }}
-                  className="bg-white rounded-xl p-4 border border-zinc-200 flex items-center justify-between group cursor-default shadow-sm"
+                  className="bg-white dark:bg-zinc-900 rounded-xl p-4 border border-zinc-200 dark:border-zinc-700 flex items-center justify-between group cursor-default shadow-sm"
                 >
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${s.color} flex items-center justify-center group-hover:scale-110 transition-transform`}>
                       <s.icon className="w-5 h-5 text-white" />
                     </div>
-                    <span className="text-sm text-zinc-600 font-medium">{s.label}</span>
+                    <span className="text-sm text-zinc-600 dark:text-zinc-400 dark:text-zinc-500 font-medium">{s.label}</span>
                   </div>
                   <span className={`text-lg font-black ${s.accent}`}>{s.value}</span>
                 </motion.div>
@@ -692,13 +723,13 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full text-emerald-600 text-xs font-bold mb-5">
             <Zap className="w-3.5 h-3.5" /> HOW IT WORKS
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Start Selling in{' '}
             <span className="bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent">
               3 Simple Steps
             </span>
           </h2>
-          <p className="mt-3 text-zinc-500 text-sm">From zero to AI-powered sales in under 5 minutes.</p>
+          <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm">From zero to AI-powered sales in under 5 minutes.</p>
         </motion.div>
         <div className="grid sm:grid-cols-3 gap-8 sm:gap-6 relative">
           <div className="hidden sm:block absolute top-20 left-[16.66%] right-[16.66%] h-0.5 bg-gradient-to-r from-emerald-200 via-emerald-300 to-emerald-200" />
@@ -713,16 +744,16 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.15 }}
-              className="relative text-center p-8 bg-white rounded-3xl border border-zinc-100 hover:border-emerald-100 hover:shadow-lg transition-all group"
+              className="relative text-center p-8 bg-white dark:bg-zinc-900 rounded-3xl border border-zinc-100 dark:border-zinc-800 hover:border-emerald-100 hover:shadow-lg transition-all group"
             >
-              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white px-4 py-0.5 rounded-full text-[10px] font-bold text-zinc-400 border border-zinc-200 group-hover:border-emerald-200 group-hover:text-emerald-600 transition-all">
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-white dark:bg-zinc-900 px-4 py-0.5 rounded-full text-[10px] font-bold text-zinc-400 dark:text-zinc-500 border border-zinc-200 dark:border-zinc-700 group-hover:border-emerald-200 group-hover:text-emerald-600 transition-all">
                 Step {s.step}
               </div>
               <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${s.color} flex items-center justify-center mx-auto mb-5 shadow-lg shadow-emerald-500/20 group-hover:scale-110 transition-transform duration-300`}>
                 <s.icon className="w-8 h-8 text-white" />
               </div>
-              <h3 className="text-lg font-bold text-zinc-900 mb-2">{s.title}</h3>
-              <p className="text-sm text-zinc-500 leading-relaxed">{s.desc}</p>
+              <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-2">{s.title}</h3>
+              <p className="text-sm text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 leading-relaxed">{s.desc}</p>
             </motion.div>
           ))}
         </div>
@@ -739,27 +770,27 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full text-emerald-600 text-xs font-bold mb-5">
             <BarChart3 className="w-3.5 h-3.5" /> DASHBOARD
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Your{' '}
             <span className="bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent">
               Command Center
             </span>
           </h2>
-          <p className="mt-3 text-zinc-500 text-sm">Monitor everything from one powerful dashboard.</p>
+          <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm">Monitor everything from one powerful dashboard.</p>
         </motion.div>
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="bg-white rounded-[1.5rem] border border-zinc-200 overflow-hidden shadow-xl shadow-zinc-200/50"
+          className="bg-white dark:bg-zinc-900 rounded-[1.5rem] border border-zinc-200 dark:border-zinc-700 overflow-hidden shadow-xl shadow-zinc-200/50"
         >
-          <div className="bg-zinc-50 px-5 py-3 flex items-center gap-3 border-b border-zinc-200">
+          <div className="bg-zinc-50 dark:bg-zinc-800/50 px-5 py-3 flex items-center gap-3 border-b border-zinc-200 dark:border-zinc-700">
             <div className="flex gap-1.5">
               <motion.div animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: 999999, duration: 2 }} className="w-3 h-3 rounded-full bg-red-400" />
               <motion.div animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: 999999, duration: 2, delay: 0.3 }} className="w-3 h-3 rounded-full bg-amber-400" />
               <motion.div animate={{ opacity: [1, 0.5, 1] }} transition={{ repeat: 999999, duration: 2, delay: 0.6 }} className="w-3 h-3 rounded-full bg-emerald-400" />
             </div>
-            <span className="text-xs font-bold text-zinc-500">AI Sales Dashboard — Live</span>
+            <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">AI Sales Dashboard — Live</span>
             <motion.div
               animate={{ opacity: [0.3, 1, 0.3] }}
               transition={{ repeat: 999999, duration: 2 }}
@@ -783,11 +814,11 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                 viewport={{ once: true }}
                 transition={{ delay: idx * 0.1 }}
                 whileHover={{ y: -2 }}
-                className="bg-zinc-50 rounded-xl p-4 border border-zinc-100 hover:border-emerald-100 transition-all"
+                className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4 border border-zinc-100 dark:border-zinc-800 hover:border-emerald-100 transition-all"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-medium text-zinc-500">{c.label}</span>
-                  <c.icon className="w-4 h-4 text-zinc-400" />
+                  <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">{c.label}</span>
+                  <c.icon className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
                 </div>
                 <div className={`text-xl sm:text-2xl font-black ${c.color}`}>{c.value}</div>
                 <div className="text-[10px] font-bold text-emerald-600 mt-1">{c.change}</div>
@@ -812,9 +843,9 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               initial={{ opacity: 0, x: -20 }}
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
-              className="bg-zinc-50 rounded-xl p-4 border border-zinc-100"
+              className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4 border border-zinc-100 dark:border-zinc-800"
             >
-              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+              <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-4 flex items-center gap-2">
                 <ShoppingBag className="w-3.5 h-3.5" /> Recent Orders
               </h4>
               {[
@@ -828,14 +859,14 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   whileInView={{ opacity: 1, x: 0 }}
                   viewport={{ once: true }}
                   transition={{ delay: i * 0.1 }}
-                  className="flex items-center justify-between py-2.5 border-b border-zinc-200 last:border-0"
+                  className="flex items-center justify-between py-2.5 border-b border-zinc-200 dark:border-zinc-700 last:border-0"
                 >
                   <div>
-                    <p className="text-sm font-medium text-zinc-900">{o.customer}</p>
-                    <p className="text-[10px] text-zinc-500">{o.product}</p>
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{o.customer}</p>
+                    <p className="text-[10px] text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">{o.product}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-bold text-zinc-700">{o.amount}</p>
+                    <p className="text-sm font-bold text-zinc-700 dark:text-zinc-300 dark:text-zinc-600">{o.amount}</p>
                     <span className={`text-[10px] font-bold ${o.statusColor}`}>{o.status}</span>
                   </div>
                 </motion.div>
@@ -845,9 +876,9 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               initial={{ opacity: 0, x: 20 }}
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
-              className="bg-zinc-50 rounded-xl p-4 border border-zinc-100"
+              className="bg-zinc-50 dark:bg-zinc-800/50 rounded-xl p-4 border border-zinc-100 dark:border-zinc-800"
             >
-              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+              <h4 className="text-xs font-bold text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 uppercase tracking-wide mb-4 flex items-center gap-2">
                 <Shield className="w-3.5 h-3.5" /> AI Payment Verification
               </h4>
               <div className="space-y-3">
@@ -861,7 +892,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                     <CheckCircle className="w-4 h-4 text-emerald-600" />
                     <span className="text-sm font-bold text-emerald-700">Verified</span>
                   </div>
-                  <p className="text-xs text-zinc-500">Ahmed Ali — Rs.4,499 — Screenshot matched ✓</p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">Ahmed Ali — Rs.4,499 — Screenshot matched ✓</p>
                 </motion.div>
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
@@ -874,7 +905,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                     <Clock className="w-4 h-4 text-amber-600" />
                     <span className="text-sm font-bold text-amber-700">Pending Review</span>
                   </div>
-                  <p className="text-xs text-zinc-500">Sana Khan — Rs.2,999 — Awaiting screenshot</p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">Sana Khan — Rs.2,999 — Awaiting screenshot</p>
                 </motion.div>
               </div>
             </motion.div>
@@ -894,10 +925,10 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full text-emerald-600 text-xs font-bold mb-5">
             <Zap className="w-3.5 h-3.5" /> 24/7 AUTOMATION
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Never Miss a <span className="text-emerald-600">Single Lead</span>
           </h2>
-          <p className="mt-3 text-zinc-500 text-sm">Your AI agent works around the clock — weekends, holidays, 24/7.</p>
+          <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm">Your AI agent works around the clock — weekends, holidays, 24/7.</p>
         </motion.div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {[
@@ -913,14 +944,14 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               viewport={{ once: true }}
               transition={{ delay: i * 0.1 }}
               whileHover={{ y: -4 }}
-              className="bg-white rounded-2xl p-6 border border-zinc-100 hover:border-emerald-100 hover:shadow-lg transition-all text-center group"
+              className="bg-white dark:bg-zinc-900 rounded-2xl p-6 border border-zinc-100 dark:border-zinc-800 hover:border-emerald-100 hover:shadow-lg transition-all text-center group"
             >
               <div className="w-14 h-14 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-emerald-200 group-hover:scale-110 transition-transform">
                 <a.icon className="w-7 h-7 text-emerald-600" />
               </div>
-              <div className="text-3xl font-black text-zinc-900 mb-1">{a.value}</div>
+              <div className="text-3xl font-black text-zinc-900 dark:text-zinc-100 mb-1">{a.value}</div>
               <div className="text-sm font-bold text-emerald-600 mb-2">{a.label}</div>
-              <p className="text-xs text-zinc-500 leading-relaxed">{a.desc}</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 leading-relaxed">{a.desc}</p>
             </motion.div>
           ))}
         </div>
@@ -938,11 +969,11 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full text-emerald-600 text-xs font-bold mb-5">
             <DollarSign className="w-3.5 h-3.5" /> PRICING
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Simple, Transparent{' '}
             <span className="bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent">Pricing</span>
           </h2>
-          <p className="mt-3 text-zinc-500 text-sm">Start free. Upgrade when you grow. No hidden fees.</p>
+          <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm">Start free. Upgrade when you grow. No hidden fees.</p>
         </motion.div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
           {pricingPlans.map((p, i) => (
@@ -954,8 +985,8 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               transition={{ delay: i * 0.08 }}
               className={`relative p-6 rounded-2xl border transition-all duration-300 ${
                 p.popular
-                  ? 'bg-white border-emerald-200 shadow-xl shadow-emerald-500/10 ring-1 ring-emerald-500/20'
-                  : 'bg-white border-zinc-100 hover:border-zinc-200 hover:shadow-lg'
+                  ? 'bg-white dark:bg-zinc-900 border-emerald-200 shadow-xl shadow-emerald-500/10 ring-1 ring-emerald-500/20'
+                  : 'bg-white dark:bg-zinc-900 border-zinc-100 dark:border-zinc-800 hover:border-zinc-200 dark:hover:border-zinc-700 hover:shadow-lg'
               }`}
             >
               {p.popular && (
@@ -971,12 +1002,12 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   MOST POPULAR
                 </motion.div>
               )}
-              <h3 className="text-lg font-bold text-zinc-900">{p.name}</h3>
+              <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{p.name}</h3>
               <div className="mt-3 flex items-baseline gap-0.5">
-                <span className="text-3xl font-black text-zinc-900">{p.price}</span>
-                <span className="text-xs text-zinc-500">/month</span>
+                <span className="text-3xl font-black text-zinc-900 dark:text-zinc-100">{p.price}</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">/month</span>
               </div>
-              <p className="text-xs text-zinc-500 mt-1.5 mb-5">{p.desc}</p>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 mt-1.5 mb-5">{p.desc}</p>
               <ul className="space-y-2.5 mb-6">
                 {p.features.map(f => (
                   <motion.li
@@ -984,7 +1015,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                     initial={{ opacity: 0, x: -10 }}
                     whileInView={{ opacity: 1, x: 0 }}
                     viewport={{ once: true }}
-                    className="flex items-start gap-2 text-xs text-zinc-600"
+                    className="flex items-start gap-2 text-xs text-zinc-600 dark:text-zinc-400 dark:text-zinc-500"
                   >
                     <CheckCircle className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
                     {f}
@@ -998,7 +1029,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                 className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
                   p.popular
                     ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-lg shadow-emerald-500/30 hover:shadow-emerald-500/50'
-                    : 'bg-zinc-50 text-zinc-700 hover:bg-zinc-100 border border-zinc-200'
+                    : 'bg-zinc-50 dark:bg-zinc-800/50 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700'
                 }`}
               >
                 {p.name === 'Free' ? 'Get Started' : 'Start Free Trial'}
@@ -1019,11 +1050,11 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full text-emerald-600 text-xs font-bold mb-5">
             <Star className="w-3.5 h-3.5" /> TESTIMONIALS
           </div>
-          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-5xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Loved by{' '}
             <span className="bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent">Store Owners</span>
           </h2>
-          <p className="mt-3 text-zinc-500 text-sm">See what our customers are saying about AI-powered sales.</p>
+          <p className="mt-3 text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 text-sm">See what our customers are saying about AI-powered sales.</p>
         </motion.div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
           {testimonials.map((t, i) => (
@@ -1034,7 +1065,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               viewport={{ once: true }}
               transition={{ delay: i * 0.1 }}
               whileHover={{ y: -4 }}
-              className="bg-white rounded-2xl p-6 border border-zinc-100 hover:border-emerald-100 hover:shadow-lg transition-all group"
+              className="bg-white dark:bg-zinc-900 rounded-2xl p-6 border border-zinc-100 dark:border-zinc-800 hover:border-emerald-100 hover:shadow-lg transition-all group"
             >
               <div className="flex gap-0.5 mb-4">
                 {Array(t.rating).fill(0).map((_, i) => (
@@ -1049,8 +1080,8 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   </motion.div>
                 ))}
               </div>
-              <p className="text-sm text-zinc-600 leading-relaxed mb-5">"{t.text}"</p>
-              <div className="flex items-center gap-3 pt-4 border-t border-zinc-100">
+              <p className="text-sm text-zinc-600 dark:text-zinc-400 dark:text-zinc-500 leading-relaxed mb-5">"{t.text}"</p>
+              <div className="flex items-center gap-3 pt-4 border-t border-zinc-100 dark:border-zinc-800">
                 <motion.div
                   whileHover={{ scale: 1.1 }}
                   className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-xs font-bold text-white shadow-lg"
@@ -1058,8 +1089,8 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                   {t.name.split(' ').map(n => n[0]).join('')}
                 </motion.div>
                 <div className="flex-1">
-                  <p className="text-sm font-bold text-zinc-900">{t.name}</p>
-                  <p className="text-[10px] text-zinc-500">{t.store}</p>
+                  <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100">{t.name}</p>
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400 dark:text-zinc-500">{t.store}</p>
                 </div>
                 <span className="text-xs font-black text-emerald-600">{t.revenue}</span>
               </div>
@@ -1079,7 +1110,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-emerald-50 border border-emerald-200 rounded-full text-emerald-600 text-xs font-bold mb-5">
             <HelpCircle className="w-3.5 h-3.5" /> FAQ
           </div>
-          <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-zinc-900">
+          <h2 className="text-3xl sm:text-4xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             Frequently Asked{' '}
             <span className="bg-gradient-to-r from-emerald-500 via-emerald-400 to-green-500 bg-clip-text text-transparent">Questions</span>
           </h2>
@@ -1092,16 +1123,16 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.05 }}
-              className="bg-white rounded-xl border border-zinc-100 overflow-hidden"
+              className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-100 dark:border-zinc-800 overflow-hidden"
             >
               <motion.button
                 onClick={() => setOpenFaq(openFaq === i ? null : i)}
                 className="w-full flex items-center justify-between px-5 py-4 text-left group"
                 whileHover={{ backgroundColor: 'rgba(0,0,0,0.02)' }}
               >
-                <span className="text-sm font-bold text-zinc-900 group-hover:text-emerald-600 transition-colors">{faq.q}</span>
+                <span className="text-sm font-bold text-zinc-900 dark:text-zinc-100 group-hover:text-emerald-600 transition-colors">{faq.q}</span>
                 <motion.div animate={{ rotate: openFaq === i ? 180 : 0 }} transition={{ duration: 0.3 }}>
-                  <ChevronDown className="w-4 h-4 text-zinc-400" />
+                  <ChevronDown className="w-4 h-4 text-zinc-400 dark:text-zinc-500" />
                 </motion.div>
               </motion.button>
               <AnimatePresence>
@@ -1111,7 +1142,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
                       exit={{ opacity: 0 }}
-                      className="px-5 pb-4 text-sm text-zinc-500 leading-relaxed border-t border-zinc-100 pt-4"
+                      className="px-5 pb-4 text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed border-t border-zinc-100 dark:border-zinc-800 pt-4"
                     >
                       {faq.a}
                     </motion.p>
@@ -1202,7 +1233,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
       </AnimatePresence>
 
       {/* ========== FOOTER ========== */}
-      <footer className="border-t border-zinc-100 py-12">
+      <footer className="border-t border-zinc-100 dark:border-zinc-800 py-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-8 pb-10">
             <div>
@@ -1210,9 +1241,9 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                 <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20">
                   <Rocket className="w-4 h-4 text-white" />
                 </div>
-                <span className="font-black text-base text-zinc-900">SaaS<span className="text-emerald-500">Closer</span></span>
+                <span className="font-black text-base text-zinc-900 dark:text-zinc-100">SaaS<span className="text-emerald-500">Closer</span></span>
               </div>
-              <p className="text-xs text-zinc-500 leading-relaxed max-w-[220px]">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed max-w-[220px]">
                 AI-powered WhatsApp sales automation for modern ecommerce stores. Close more deals with less effort.
               </p>
               <div className="flex gap-3 mt-4">
@@ -1225,7 +1256,7 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
                     key={s.label}
                     whileHover={{ scale: 1.1, backgroundColor: 'rgba(16,185,129,0.1)' }}
                     onClick={() => showToast(`${s.action} support coming soon!`)}
-                    className="w-8 h-8 bg-zinc-100 rounded-lg flex items-center justify-center text-zinc-400 hover:text-emerald-600 cursor-pointer transition-colors"
+                    className="w-8 h-8 bg-zinc-100 dark:bg-zinc-800 rounded-lg flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-emerald-600 cursor-pointer transition-colors"
                   >
                     <s.icon className="w-4 h-4" />
                   </motion.div>
@@ -1238,11 +1269,11 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               { title: 'Support', links: ['Help Center', 'API Docs', 'Privacy Policy', 'Terms of Service', 'Status'] },
             ].map(col => (
               <div key={col.title}>
-                <h4 className="text-sm font-bold text-zinc-900 mb-4">{col.title}</h4>
+                <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-4">{col.title}</h4>
                 <ul className="space-y-2.5">
                   {col.links.map(l => (
                     <li key={l}>
-                      <button onClick={() => handleFooterLink(l)} className="text-xs text-zinc-500 hover:text-zinc-900 cursor-pointer transition-colors duration-200">
+                      <button onClick={() => handleFooterLink(l)} className="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors duration-200">
                         {l}
                       </button>
                     </li>
@@ -1251,22 +1282,21 @@ export default function LandingPage({ onGetStarted, onLogin }: Props) {
               </div>
             ))}
           </div>
-          <div className="border-t border-zinc-100 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <p className="text-xs text-zinc-400">
+          <div className="border-t border-zinc-100 dark:border-zinc-800 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-xs text-zinc-400 dark:text-zinc-500">
               © {new Date().getFullYear()} SaaS Closer AI. All rights reserved. Made with ❤️ for store owners.
             </p>
-            <div className="flex gap-6 text-xs text-zinc-400">
-              <button onClick={() => handleFooterLink('Privacy Policy')} className="hover:text-zinc-900 cursor-pointer transition-colors">Privacy</button>
-              <button onClick={() => handleFooterLink('Terms of Service')} className="hover:text-zinc-900 cursor-pointer transition-colors">Terms</button>
-              <button onClick={() => handleFooterLink('API Docs')} className="hover:text-zinc-900 cursor-pointer transition-colors">API Docs</button>
-              <button onClick={() => handleFooterLink('Help Center')} className="hover:text-zinc-900 cursor-pointer transition-colors">Support</button>
+            <div className="flex gap-6 text-xs text-zinc-400 dark:text-zinc-500">
+              <button onClick={() => handleFooterLink('Privacy Policy')} className="hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors">Privacy</button>
+              <button onClick={() => handleFooterLink('Terms of Service')} className="hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors">Terms</button>
+              <button onClick={() => handleFooterLink('API Docs')} className="hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors">API Docs</button>
+              <button onClick={() => handleFooterLink('Help Center')} className="hover:text-zinc-900 dark:hover:text-white cursor-pointer transition-colors">Support</button>
             </div>
           </div>
         </div>
       </footer>
 
-      {/* AI Chat Widget */}
-      <ChatWidget />
+
     </div>
   );
 }

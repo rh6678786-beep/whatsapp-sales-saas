@@ -259,10 +259,12 @@ export function initializeWhatsAppClient(adminId: string) {
     
     try {
       const result = await processIncomingMessage(adminId, userId, text || "");
-      console.log(`[WHATSAPP][${adminId}] AI response generated: "${result?.text?.slice(0, 40)}..."`);
       
       if (result?.text) {
+        console.log(`[WHATSAPP][${adminId}] AI response: "${result.text.slice(0, 40)}..."`);
         await sendWhatsAppMessage(adminId, userId, result.text);
+      } else if (result?.text === "") {
+        console.log(`[WHATSAPP][${adminId}] Handoff active — no auto-response sent.`);
       } else {
         console.log(`[WHATSAPP][${adminId}] No text response to send.`);
       }

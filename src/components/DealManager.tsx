@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Deal, Product } from '../types';
+import { toast } from 'react-hot-toast';
 import { Plus, Trash2, Edit2, Tag, X, Sparkles, Save, ChevronLeft, ChevronRight, Package, Calendar, DollarSign, Image, Eye, EyeOff, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { TableSkeleton } from './Skeleton';
 
 export default function DealManager() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isAdding, setIsAdding] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [formData, setFormData] = useState<Partial<Deal>>({
@@ -23,10 +26,13 @@ export default function DealManager() {
 
   const fetchDeals = async () => {
     try {
+      setLoading(true);
       const res = await axios.get('/api/deals');
       setDeals(res.data);
     } catch (err: any) {
       console.error('Failed to fetch deals:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -108,13 +114,40 @@ export default function DealManager() {
   };
 
   const handleDelete = async (id: string) => {
-    if (confirm('Delete this deal permanently?')) {
-      try {
-        await axios.delete(`/api/deals/${id}`);
-        fetchDeals();
-      } catch (err) {
-        console.error('Failed to delete deal:', err);
-      }
+    try {
+      await axios.delete(`/api/deals/${id}`);
+
+      const timer = setTimeout(async () => {
+        try {
+          await axios.patch(`/api/deals/${id}/permanent-delete`);
+        } catch {}
+      }, 30000);
+
+      toast.custom(
+        (t) => (
+          <div className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-2xl px-5 py-3.5 shadow-2xl flex items-center gap-4 max-w-sm">
+            <span className="text-sm font-bold flex-1">Deal deleted</span>
+            <button
+              onClick={async () => {
+                clearTimeout(timer);
+                try {
+                  await axios.patch(`/api/deals/${id}/restore`);
+                  toast.dismiss(t.id);
+                  fetchDeals();
+                } catch {}
+              }}
+              className="px-3 py-1.5 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white rounded-lg text-xs font-black hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              UNDO
+            </button>
+          </div>
+        ),
+        { duration: 30000 }
+      );
+
+      fetchDeals();
+    } catch (err) {
+      console.error('Failed to delete deal:', err);
     }
   };
 
@@ -169,8 +202,11 @@ export default function DealManager() {
         </button>
       </div>
 
+      {/* Loading State */}
+      {loading && <TableSkeleton rows={6} cols={3} />}
+
       {/* Deals Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+      {!loading && <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
         <AnimatePresence mode="popLayout">
           {deals.map((deal) => (
             <motion.div
@@ -267,10 +303,10 @@ export default function DealManager() {
             </motion.div>
           ))}
         </AnimatePresence>
-      </div>
+      </div>}
 
       {/* Empty State */}
-      {deals.length === 0 && (
+      {!loading && deals.length === 0 && (
         <div className="py-32 flex flex-col items-center justify-center text-zinc-400 space-y-4">
           <div className="w-24 h-24 bg-zinc-100 dark:bg-zinc-900 rounded-full flex items-center justify-center">
             <Tag className="w-10 h-10 opacity-20" />

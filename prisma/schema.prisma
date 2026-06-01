@@ -41,12 +41,16 @@ model Admin {
   subscription       Json?
   tiktok             Json?
   aiLearningPatterns Json?
+  memoryConfig       Json?    // RAG memory settings: { enabled, summarizationThreshold, embeddingEnabled }
+  proactiveConfig    Json?    // Proactive triggers config: { enabled, maxPerDay, abandonedCart, priceDrop, birthday, reEngagement }
+  teamMembers        Json?    // Array of TeamMember objects
   
   // Relations
   products           Product[]
   sessions           Session[]
   orders             Order[]
   deals              Deal[]
+  dripCampaigns      DripCampaign[]
 }
 
 // 2. Products Catalog Table
@@ -59,7 +63,11 @@ model Product {
   features  String[] // Postgres array of features
   images    String[] // Postgres array of image URLs
   videos    String[] // Postgres array of video URLs
+  stock     Int      @default(10) // 0 = out of stock, >0 = available
   
+  deleted   Boolean  @default(false)
+  deletedAt DateTime?
+
   // Relations
   admin     Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
 }
@@ -124,8 +132,63 @@ model Deal {
   endDate       DateTime?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
+  deleted       Boolean  @default(false)
+  deletedAt     DateTime?
 
   admin         Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+}
+
+// 9. AI Cost Tracking Log
+model AiDlq {
+  id          Int      @id @default(autoincrement())
+  adminId     String
+  operation   String
+  payload     Json
+  errorMessage String?
+  createdAt   DateTime @default(now())
+}
+
+model AiCostLog {
+  id          Int      @id @default(autoincrement()) @map("id")
+  adminId     String   @map("admin_id")
+  model       String   @default("gemini-2.0-flash") @map("model")
+  inputTokens Int      @default(0) @map("input_tokens")
+  outputTokens Int     @default(0) @map("output_tokens")
+  cost        Float    @default(0) @map("cost")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([adminId, createdAt])
+  @@map("ai_cost_log")
+}
+
+model DripCampaign {
+  id        String   @id @default(uuid())
+  adminId   String
+  name      String
+  trigger   String   // "abandoned_cart", "new_session", "post_purchase", "manual"
+  enabled   Boolean  @default(true)
+  steps     Json     // [{ day: 1, message: "Hi!", aiGenerated: false }, ...]
+  createdAt DateTime @default(now())
+
+  admin     Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+
+  @@unique([adminId, name])
+}
+
+// 0. Audit Log Table
+model AuditLog {
+  id        Int      @id @default(autoincrement()) @map("id")
+  adminId   String   @map("admin_id")
+  memberId  String?  @map("member_id")
+  action    String   @map("action")
+  entity    String   @map("entity")
+  entityId  String?  @map("entity_id")
+  details   Json?    @map("details")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([adminId, createdAt])
+  @@map("audit_logs")
 }
 
 // 6. Confirmed Orders Table

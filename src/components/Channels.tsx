@@ -2,12 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { Share2, Smartphone, Globe, CheckCircle, Zap, ChevronRight, Link2, Lock, Sparkles } from 'lucide-react';
-import { WhatsAppIcon, MessengerIcon, InstagramIcon, TelegramIcon, TikTokIcon } from './channelIcons';
+import { WhatsAppIcon, MessengerIcon, InstagramIcon, TelegramIcon } from './channelIcons';
 import { useFeatures } from '../hooks/useFeatures';
 import FacebookSetup from './channels/FacebookSetup';
 import InstagramSetup from './channels/InstagramSetup';
 import TelegramSetup from './channels/TelegramSetup';
-import TikTokSetup from './channels/TikTokSetup';
 
 interface Channel {
   id: string;
@@ -54,15 +53,8 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
   const [showTgToken, setShowTgToken] = useState(false);
   const [tgBotName, setTgBotName] = useState<string | null>(null);
   
-  const [tiktokConfig, setTiktokConfig] = useState({ clientKey: '', clientSecret: '', isActive: false });
-  const [tiktokTesting, setTiktokTesting] = useState(false);
-  const [tiktokError, setTiktokError] = useState<string | null>(null);
-  const [tiktokConnected, setTiktokConnected] = useState(false);
-  const [showTiktokSecret, setShowTiktokSecret] = useState(false);
-
   const [advancedModeFb, setAdvancedModeFb] = useState(false);
   const [advancedModeIg, setAdvancedModeIg] = useState(false);
-  const [advancedModeTiktok, setAdvancedModeTiktok] = useState(false);
 
   const [whatsappConnected, setWhatsappConnected] = useState(false);
 
@@ -71,8 +63,7 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
     { id: 'messenger', name: 'Facebook Messenger', description: 'Connect your Facebook page', icon: MessengerIcon, color: 'text-blue-500', gradient: 'from-blue-500 to-blue-600', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-200 dark:border-blue-500/30', textColor: 'text-blue-600 dark:text-blue-400', connected: fbConnected, configurable: true },
     { id: 'instagram', name: 'Instagram DM', description: 'Connect Instagram business account', icon: InstagramIcon, color: 'text-pink-500', gradient: 'from-pink-500 to-rose-600', bg: 'bg-pink-50 dark:bg-pink-500/10', border: 'border-pink-200 dark:border-pink-500/30', textColor: 'text-pink-600 dark:text-pink-400', connected: igConnected, configurable: true },
     { id: 'telegram', name: 'Telegram', description: 'Connect via Telegram Bot API', icon: TelegramIcon, color: 'text-sky-500', gradient: 'from-sky-500 to-sky-600', bg: 'bg-sky-50 dark:bg-sky-500/10', border: 'border-sky-200 dark:border-sky-500/30', textColor: 'text-sky-600 dark:text-sky-400', connected: tgConnected, configurable: true },
-    { id: 'tiktok', name: 'TikTok Shop/DM', description: 'Connect TikTok Business API', icon: TikTokIcon, color: 'text-zinc-900 dark:text-white', gradient: 'from-zinc-800 to-zinc-900 dark:from-zinc-700 dark:to-zinc-800', bg: 'bg-zinc-100 dark:bg-zinc-800/50', border: 'border-zinc-300 dark:border-zinc-700', textColor: 'text-zinc-900 dark:text-zinc-100', connected: tiktokConnected, configurable: true },
-    { id: 'webchat', name: 'Web Chat Widget', description: 'Embeddable chat widget for your website', icon: Globe, color: 'text-violet-500', gradient: 'from-violet-500 to-violet-600', bg: 'bg-violet-50 dark:bg-violet-500/10', border: 'border-violet-200 dark:border-violet-500/30', textColor: 'text-violet-600 dark:text-violet-400', connected: false },
+
   ];
 
   const checkWhatsAppStatus = async () => {
@@ -91,9 +82,6 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
     const handleAuthMessage = async (event: MessageEvent) => {
       if (event.data?.type === 'FB_AUTH_SUCCESS') {
         await loadFacebookConfig();
-      } else if (event.data?.type === 'TIKTOK_AUTH_SUCCESS') {
-        await axios.post('/api/tiktok/config', { isActive: true });
-        setTiktokConnected(true);
       }
     };
     
@@ -114,10 +102,6 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
       if (res.data.instagram) {
         setInstagramConfig(res.data.instagram);
         setIgConnected(res.data.instagram.isActive);
-      }
-      if (res.data.tiktok) {
-        setTiktokConfig(res.data.tiktok);
-        setTiktokConnected(res.data.tiktok.isActive);
       }
       if (res.data.telegram) {
         setTelegramConfig({
@@ -319,24 +303,6 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
                       />
                     )}
 
-                    {isExpanded && channel.id === 'tiktok' && (
-                      <TikTokSetup
-                        config={tiktokConfig}
-                        connected={tiktokConnected}
-                        testing={tiktokTesting}
-                        error={tiktokError}
-                        showSecret={showTiktokSecret}
-                        advancedMode={advancedModeTiktok}
-                        setConfig={setTiktokConfig}
-                        setTesting={setTiktokTesting}
-                        setError={setTiktokError}
-                        setConnected={setTiktokConnected}
-                        setShowSecret={setShowTiktokSecret}
-                        setAdvancedMode={setAdvancedModeTiktok}
-                        openOAuthPopup={openOAuthPopup}
-                      />
-                    )}
-
                     {isExpanded && channel.id === 'whatsapp' && (
                       <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: 'easeInOut' }} className="overflow-hidden">
                         <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-5" />
@@ -354,20 +320,6 @@ export default function Channels({ onNavigate }: { onNavigate?: (tab: string) =>
                       </motion.div>
                     )}
 
-                    {isExpanded && channel.id === 'webchat' && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: 'easeInOut' }} className="overflow-hidden">
-                        <div className="h-px bg-zinc-200 dark:bg-zinc-800 my-5" />
-                        <div className="space-y-4 text-center py-4" onClick={e => e.stopPropagation()}>
-                          <div className="mx-auto w-16 h-16 bg-violet-50 dark:bg-violet-500/10 rounded-2xl flex items-center justify-center">
-                            <Globe className="w-8 h-8 text-violet-500" />
-                          </div>
-                          <div>
-                            <h4 className="text-lg font-black text-zinc-900 dark:text-white">Web Chat Widget</h4>
-                            <p className="text-xs text-zinc-500 mt-2 max-w-sm mx-auto">Coming soon — Embed a chat widget on your website.</p>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
                   </AnimatePresence>
                 </div>
               </motion.div>

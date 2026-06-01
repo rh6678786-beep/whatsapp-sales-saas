@@ -1,30 +1,33 @@
 # State: SalesForce AI
 
-**Current Phase:** Phase 1 — Features Tab: Sidebar Reorganization
+**Current Phase:** Phase 7 — Technical Debt & Quality
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-05-30)
+See: .planning/PROJECT.md (updated 2026-05-31)
 
 **Core value:** AI autonomously handles sales conversations on WhatsApp so store owners never miss a customer or a sale.
-**Current focus:** Phase 1 — Features Tab: Sidebar Reorganization
+**Current focus:** Phase 7 — Technical Debt & Quality
 
 ## Current State
 
-- Initial project setup complete
-- Codebase mapped (7 documents in .planning/codebase/)
-- Research complete (4 documents in .planning/research/)
-- Requirements defined (7 v1 requirements)
-- Roadmap created (1 phase)
-- **Next:** Plan and execute Phase 1
+- Phases 1-6 complete
+- Phase 7 pending: tests, modularization, secrets management
 
 ## Progress
 
 | Phase | Status | Plans | Progress |
 |-------|--------|-------|----------|
-| 1     | ○      | 0/1   | 0%       |
+| 1     | ✓      | 1/1   | 100%     |
+| 2     | ✓      | 7/7   | 100%     |
+| 3     | ✓      | 9/9   | 100%     |
+| 4     | ✓      | 10/10 | 100%     |
+| 5     | ✓      | 10/10 | 100%     |
+| 6     | ✓      | 6/6   | 100%     |
+| 7     | ○      | 0/0   | 0%       |
 
 ## Decisions Pending
 
-- Features tab icon choice
-- Sub-tab order within Features tab
+- Vector dimension size — Gemini text-embedding-004 uses 768 dimensions (confirmed)
+- Summarization threshold — plan uses 20 messages (configurable via admin settings)
+- Embedding granularity — plan uses per-message embeddings for fine-grained search

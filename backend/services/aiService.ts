@@ -1,6 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { SalesState, Product, Message } from "../../src/types";
 import { dbService } from "./dbService";
+import { logAiDlq } from "./aiDlqService";
+import { executeWithCircuitBreaker } from "../config/aiCircuitBreaker";
 
 const LANGUAGE_MAP: Record<string, { name: string; instruction: string; adminActionInstruction: string }> = {
   ur: {
@@ -166,7 +168,7 @@ async function enqueueAIRequest<T>(adminId: string, fn: () => Promise<T>): Promi
   return next;
 }
 
-async function getAIClient(adminId: string) {
+export async function getAIClient(adminId: string) {
   const settings = await dbService.getSettings(adminId);
   const apiKey = settings.geminiApiKey;
 
@@ -235,14 +237,15 @@ async function generateWithRetry(
 
 export async function generateSalesResponse(
   adminId: string,
-  state: SalesState, 
-  history: Message[], 
-  lastMessage: string, 
-  topProducts: Product[], 
-  mediaBase64?: string, 
-  mimeType?: string, 
-  userName: string = "Customer", 
-  leadQualificationData?: any
+  state: SalesState,
+  history: Message[],
+  lastMessage: string,
+  topProducts: Product[],
+  mediaBase64?: string,
+  mimeType?: string,
+  userName: string = "Customer",
+  leadQualificationData?: any,
+  retrievedContext?: { summary?: string | null; preferences?: Record<string, any>; similarContexts?: Array<{ text: string; role: string; sessionId: string }> }
 ) {
   const ai = await getAIClient(adminId);
   const settings = await dbService.getSettings(adminId);
@@ -280,12 +283,12 @@ export async function generateSalesResponse(
 CURRENT ACTIVE DEALS (Customer will ask about these)
 ========================================================================
 ${activeDeals.map(d => {
-  let dealStr = `• ${d.title}`;
-  if (d.discountPrice) dealStr += ` — Rs. ${d.discountPrice}`;
-  if (d.description) dealStr += `\n  Details: ${d.description}`;
-  if (d.endDate) dealStr += `\n  Valid till: ${new Date(d.endDate).toLocaleDateString()}`;
-  return dealStr;
-}).join("\n")}
+      let dealStr = `• ${d.title}`;
+      if (d.discountPrice) dealStr += ` — Rs. ${d.discountPrice}`;
+      if (d.description) dealStr += `\n  Details: ${d.description}`;
+      if (d.endDate) dealStr += `\n  Valid till: ${new Date(d.endDate).toLocaleDateString()}`;
+      return dealStr;
+    }).join("\n")}
 
 If a customer asks about deals or if any deal is running, tell them about the above active deals. If there are no deals applicable to what they want, honestly say no deal is currently available for that. If they ask how many deals are applied or who has deals, answer based on the deals listed above.`;
   } else {
@@ -293,6 +296,24 @@ If a customer asks about deals or if any deal is running, tell them about the ab
 DEALS INFORMATION
 ========================================================================
 No active deals currently. If a customer asks about deals, tell them honestly that there are no deals running right now but you can still help them with our regular products.`;
+  }
+
+  // Build memory context string (non-blocking, may be empty)
+  const memoryParts: string[] = [];
+  if (retrievedContext?.summary) {
+    memoryParts.push("========================================================================\n[LONG-TERM MEMORY — Previous conversations with this customer]\n========================================================================\nPast conversation summary: " + retrievedContext.summary);
+    if (retrievedContext?.preferences && Object.keys(retrievedContext.preferences).length > 0) {
+      memoryParts.push("Known preferences: " + JSON.stringify(retrievedContext.preferences));
+    }
+    memoryParts.push("Use long-term memory to:\n- Reference past interactions naturally\n- Show you remember them — adapt to their preferences\n- Never mention you're using a memory system");
+  }
+  if (retrievedContext?.similarContexts && retrievedContext.similarContexts.length > 0) {
+    memoryParts.push("========================================================================\n[RELATED INTERACTIONS — Similar past conversations]\n========================================================================\n" + retrievedContext.similarContexts.map(c => "• (" + c.sessionId.slice(-6) + "): " + c.text.substring(0, 200)).join("\n"));
+  }
+  // Token budget: max 1000 chars for memory context to avoid overflowing the prompt
+  let memoryContextString = memoryParts.join("\n\n");
+  if (memoryContextString.length > 1000) {
+    memoryContextString = memoryContextString.slice(0, 997) + "...";
   }
 
   const systemPrompt = `You are a senior sales manager and co-owner of a well-established brand. You've been running this business for years and you genuinely love what you sell. You're warm, knowledgeable, and you close deals not by pressure — but by building real trust.
@@ -308,6 +329,7 @@ You operate exclusively on WhatsApp — your messages must feel hand-typed by a 
 - Maximum 2–3 lines per message. One emoji max, only when it genuinely fits. Never decorate.
 - If the customer asks about deals you don't have listed, say honestly no deal is available — never invent or hallucinate discounts.
 - Only include [SEND_PICTURES:...] or [SEND_VIDEO:...] if the product actually exists in AVAILABLE PRODUCTS below. Never reference a product ID that isn't listed.
+- If the customer is angry, frustrated, requests to speak to a human/manager, or asks a question you genuinely cannot answer — include [HANDOFF_TO_HUMAN:reason] in your response. Examples: [HANDOFF_TO_HUMAN:custom_requested_human], [HANDOFF_TO_HUMAN:cannot_answer_query]. Do NOT use this for normal objections or negotiation.
 
 ================================================================================
 [PRIORITY 2] YOUR IDENTITY & PERSONALITY
@@ -329,8 +351,8 @@ You operate exclusively on WhatsApp — your messages must feel hand-typed by a 
 [PRIORITY 4] CONTEXT AWARENESS
 ================================================================================
 ${isNewCustomer
-  ? "This is a FIRST-TIME customer. Be warm, make them feel welcome, and learn what they need before suggesting products."
-  : "This is a RETURNING customer. Briefly acknowledge the previous conversation and pick up naturally. Make them feel remembered and valued."}
+      ? "This is a FIRST-TIME customer. Be warm, make them feel welcome, and learn what they need before suggesting products."
+      : "This is a RETURNING customer. Briefly acknowledge the previous conversation and pick up naturally. Make them feel remembered and valued."}
 
 Active Sales State: ${state}
 ${state === 'PAYMENT_AWAITING' ? `▸ The customer is ready to pay. Make the payment step feel easy and safe — not like a demand.
@@ -361,8 +383,13 @@ ADAPTATION RULES:
 
 ================================================================================
 [PRIORITY 6] AVAILABLE PRODUCTS — ONLY REFERENCE THESE IDs
-================================================================================
-${topProducts.map(p => `• [${p.id}] ${p.name} — Rs. ${p.price}`).join("\n")}
+========================================================================
+${topProducts.map(p => `• [${p.id}] ${p.name} — Rs. ${p.price}${(p.features?.length ?? 0) > 0 ? ` | ${p.features.slice(0, 3).join(", ")}` : ""}${p.stock === 0 ? " | OUT OF STOCK" : ""}`).join("\n")}
+
+INVENTORY RULES:
+- NEVER recommend a product marked "OUT OF STOCK"
+- Only recommend products that are listed above. Do not invent or hallucinate products.
+- If the customer asks about a specific product you don't see listed, say it's currently unavailable and suggest similar ones from the list.
 
 To send product pictures: Include [SEND_PICTURES:productId] in your response (e.g. [SEND_PICTURES:abc-123])
 To send a product video: Include [SEND_VIDEO:productId] in your response (e.g. [SEND_VIDEO:abc-123])
@@ -373,6 +400,8 @@ You may send BOTH pictures and a video together if available.
 ================================================================================
 ${history.slice(-5).map(m => `${m.role === 'user' ? '👤 Customer' : '🧑‍💼 You'}: ${m.text}`).join("\n")}
 
+${memoryContextString}
+
 Customer's Last Message: "${lastMessage}"
 ${dealsSection}`;
 
@@ -380,7 +409,7 @@ ${dealsSection}`;
     return "Hello! How can I help you today? 😊";
   }
 
-  return enqueueAIRequest(adminId, async () => {
+  return executeWithCircuitBreaker(adminId, 'generateSalesResponse', async () => {
     let contents: any = lastMessage || "I sent a message.";
 
     if (mediaBase64 && mimeType) {
@@ -430,8 +459,8 @@ ${customReason ? `Additional detail: ${customReason}` : ''}
 
 YOUR RESPONSE MUST:
 ${action === 'VERIFY'
-  ? '- Confirm their order warmly and make them feel excited about their purchase\n- Mention the next step briefly (dispatch timing, delivery estimate)\n- Make them feel they made a great decision — confident reassurance, not desperate flattery\n- Keep it to exactly 2 lines, natural WhatsApp tone, one emoji max'
-  : '- Calmly explain the issue without making them feel accused or embarrassed\n- Offer one clear, actionable next step to resolve it\n- Keep your tone helpful and solution-oriented, not cold or transactional\n- Keep it to exactly 2 lines, natural WhatsApp tone, one emoji max'}
+      ? '- Confirm their order warmly and make them feel excited about their purchase\n- Mention the next step briefly (dispatch timing, delivery estimate)\n- Make them feel they made a great decision — confident reassurance, not desperate flattery\n- Keep it to exactly 2 lines, natural WhatsApp tone, one emoji max'
+      : '- Calmly explain the issue without making them feel accused or embarrassed\n- Offer one clear, actionable next step to resolve it\n- Keep your tone helpful and solution-oriented, not cold or transactional\n- Keep it to exactly 2 lines, natural WhatsApp tone, one emoji max'}
 
 LANGUAGE & STYLE:
 Respond in the customer's language. ${adminActionInstruction}
@@ -441,7 +470,7 @@ FINAL CHECK:
 - Would the customer feel genuinely cared for, not mass-notified?
 - NO system language, NO buzzwords, NO corporate speak.`;
 
-  return enqueueAIRequest(adminId, async () => {
+  return executeWithCircuitBreaker(adminId, 'generateSalesResponse', async () => {
     const text = await generateWithRetry(
       ai,
       settings.geminiModel || "gemini-2.0-flash",
@@ -456,11 +485,11 @@ FINAL CHECK:
 export async function generateEnhancedPost(adminId: string, text: string): Promise<string> {
   const ai = await getAIClient(adminId);
   const settings = await dbService.getSettings(adminId);
-  
+
   if (!ai) {
     return text;
   }
-  
+
   const systemPrompt = `You are an expert social media copywriter specializing in e-commerce conversions. Your task is to transform raw product details into a high-impact social media post optimized for engagement and sales.
 
 OUTPUT REQUIREMENTS (strict):

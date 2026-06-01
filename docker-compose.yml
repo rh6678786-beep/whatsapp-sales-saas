@@ -6,12 +6,23 @@ services:
     ports:
       - "3000:3000"
     env_file: .env
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
     volumes:
-      # Persist WhatsApp auth sessions & cache across restarts
-      - wwebjs_auth:/app/.wwebjs_auth
-      - wwebjs_cache:/app/.wwebjs_cache
+      - ./uploads:/app/uploads
+      - ./.wwebjs_auth:/app/.wwebjs_auth
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
 
 volumes:
-  wwebjs_auth:
-  wwebjs_cache:
+  redis_data:

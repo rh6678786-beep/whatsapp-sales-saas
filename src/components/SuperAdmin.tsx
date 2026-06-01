@@ -18,7 +18,6 @@ interface AdminClient {
     facebook: boolean;
     instagram: boolean;
     telegram: boolean;
-    tiktok: boolean;
   };
   subscription?: any;
   stats: {
@@ -232,7 +231,7 @@ export default function SuperAdmin() {
                   <ChannelCard name="Facebook" connected={selectedClient.channels?.facebook || false} />
                   <ChannelCard name="Instagram" connected={selectedClient.channels?.instagram || false} />
                   <ChannelCard name="Telegram" connected={selectedClient.channels?.telegram || false} />
-                  <ChannelCard name="TikTok" connected={selectedClient.channels?.tiktok || false} />
+
                 </div>
               </div>
 

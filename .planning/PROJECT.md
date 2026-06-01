@@ -29,26 +29,29 @@ AI autonomously handles sales conversations on WhatsApp so store owners never mi
 - ✓ Reports and analytics dashboard — existing
 - ✓ Dark/light theme toggle — existing
 - ✓ WhatsApp bot simulator for testing — existing
+- ✓ Features main tab with 5 sub-tabs (Broadcast, Re-Engage, AI Publisher, Simulator, Verification) — Phase 1
 
 ### Active
 
-- [ ] **FEAT-01**: Create new "Features" main tab in sidebar
-- [ ] **FEAT-02**: Add Broadcast as sub-tab under Features (remove from WhatsApp)
-- [ ] **FEAT-03**: Add Re-Engage as sub-tab under Features
-- [ ] **FEAT-04**: Add AI Publisher as sub-tab under Features
-- [ ] **FEAT-05**: Add Simulator as sub-tab under Features
-- [ ] **FEAT-06**: Add Verification (Orders) as sub-tab under Features
+- [ ] **UI-01 to UI-07**: Features tab sidebar reorganization (Phase 1)
+- [ ] **MEM-01 to MEM-04**: Long-term memory & context with RAG (Phase 2)
+- [ ] **PRO-01 to PRO-07**: Proactive agent engine (Phase 3)
+- [ ] **REC-01 to REC-04**: Smart product recommendations (Phase 4)
+- [ ] **HND-01 to HND-05**: Human handoff & supervisor mode (Phase 5)
+- [ ] **ANL-01 to ANL-04**: Analytics & conversation learning (Phase 6)
+- [ ] **TEC-01 to TEC-04**: Technical debt & quality (Phase 7)
 
 ### Out of Scope
 
 - Mobile app — web-first, no mobile native apps planned
 - Video generation — not yet available (API limitation noted in code)
 - Real-time notifications beyond browser Notification API
-- Full test suite — not in current scope
+- WhatsApp Business API migration — future concern
+- Voice/video calls — whatsapp-web.js and Gemini do not support real-time audio
 
 ## Context
 
-Existing codebase with full WhatsApp sales agent functionality already implemented. The app serves Pakistani e-commerce businesses with multi-language AI conversations (Urdu, English, Arabic, Hindi, Bengali). Built with React + Express + PostgreSQL + Gemini AI + whatsapp-web.js. The codebase has significant technical debt including no test coverage, secrets in settings.json, and a monolithic server.ts.
+Existing codebase with full WhatsApp sales agent functionality already implemented. The app serves Pakistani e-commerce businesses with multi-language AI conversations (Urdu, English, Arabic, Hindi, Bengali). Built with React + Express + PostgreSQL (Supabase) + Gemini AI + whatsapp-web.js. The codebase has significant technical debt including no test coverage, secrets in settings.json, and a monolithic server.ts. The current AI agent is reactive — it only responds when customers message. The roadmap focuses on making it proactive (automated follow-ups, abandoned cart recovery, drip campaigns), giving it long-term memory (vector RAG), smart recommendations, human supervisor mode, analytics, and paying down technical debt.
 
 ## Constraints
 
@@ -62,23 +65,11 @@ Existing codebase with full WhatsApp sales agent functionality already implement
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Feature tabs as sub-tabs under Features main tab | Cleaner sidebar organization, groups related tools | — Pending |
-
-## Evolution
-
-This document evolves at phase transitions and milestone boundaries.
-
-**After each phase transition** (via `/gsd-transition`):
-1. Requirements invalidated? → Move to Out of Scope with reason
-2. Requirements validated? → Move to Validated with phase reference
-3. New requirements emerged? → Add to Active
-4. Decisions to log? → Add to Key Decisions
-5. "What This Is" still accurate? → Update if drifted
-
-**After each milestone** (via `/gsd-complete-milestone`):
-1. Full review of all sections
-2. Core Value check — still the right priority?
-3. Audit Out of Scope — reasons still valid?
-4. Update Context with current state
+| pgvector for RAG memory | Reuses existing PostgreSQL, no new infrastructure | — Pending |
+| node-cron for proactive scheduler | In-process, no external dependency needed | — Pending |
+| Polling-based supervisor dashboard | Works with existing Express infra, no WebSocket needed | — Pending |
+| Vitest for testing | Matches existing ESM module setup | — Pending |
 
 ---
-*Last updated: 2026-05-30 after initialization*
+
+*Last updated: 2026-05-31 after AI agent improvement planning*

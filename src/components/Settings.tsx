@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Key, Smartphone, Zap, Save, CheckCircle, Shield, Lock, Eye, EyeOff, User, Sparkles, Banknote, RefreshCw, Loader2, X, ArrowRight, Store, Upload, ChevronDown, Mail, Send, Clock, Globe } from 'lucide-react';
+import { Settings as SettingsIcon, Key, Smartphone, Zap, Save, CheckCircle, Shield, Lock, Eye, EyeOff, User, Sparkles, Banknote, RefreshCw, Loader2, X, ArrowRight, Store, Upload, ChevronDown, Mail, Send, Clock, Globe, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
+import TwoFactorSetup from './TwoFactorSetup';
 
 const LANGUAGES = [
   { code: 'ur', name: 'Urdu (Roman) — اردو' },
@@ -25,6 +26,18 @@ export default function Settings() {
     phone: '',
     address: '',
     language: 'ur',
+    memoryConfig: { enabled: true, summarizationThreshold: 20, embeddingEnabled: true },
+    proactiveConfig: {
+      enabled: false,
+      maxPerDay: 5,
+      maxPerRun: 50,
+      quietStartHour: 21,
+      quietEndHour: 9,
+      abandonedCart: { enabled: true, hours: 24 },
+      reEngagement: { enabled: true, inactiveDays: 7 },
+      priceDrop: { enabled: true },
+      birthday: { enabled: true },
+    },
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -134,6 +147,8 @@ export default function Settings() {
         phone: settings.phone,
         address: settings.address,
         language: settings.language,
+        memoryConfig: settings.memoryConfig,
+        proactiveConfig: settings.proactiveConfig,
       });
       setSaved(true);
       setTimeout(() => {
@@ -485,11 +500,183 @@ export default function Settings() {
           </div>
         </motion.div>
 
-        {/* === PASSWORD CHANGE === */}
+        {/* === MEMORY CONFIGURATION === */}
         <motion.div
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3, type: 'spring', stiffness: 200 }}
+          className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[32px] p-8 shadow-lg hover:shadow-xl transition-all duration-500 group"
+        >
+          <div className="flex items-center gap-4 mb-8">
+            <motion.div
+              whileHover={{ scale: 1.1, rotate: -5 }}
+              className="w-12 h-12 rounded-2xl bg-cyan-50 dark:bg-cyan-500/10 border border-cyan-200 dark:border-cyan-500/30 flex items-center justify-center"
+            >
+              <Brain className="w-6 h-6 text-cyan-600 dark:text-cyan-400" />
+            </motion.div>
+            <div>
+              <h3 className="text-xl font-black text-zinc-900 dark:text-white">AI Memory</h3>
+              <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Long-term context & learning</p>
+            </div>
+          </div>
+          <div className="space-y-5">
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.memoryConfig?.enabled ?? true}
+                  onChange={(e) => setSettings({ ...settings, memoryConfig: { ...settings.memoryConfig, enabled: e.target.checked } })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-cyan-300 dark:peer-focus:ring-cyan-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600" />
+                <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Enable AI Memory</span>
+              </label>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.memoryConfig?.embeddingEnabled ?? true}
+                  onChange={(e) => setSettings({ ...settings, memoryConfig: { ...settings.memoryConfig, embeddingEnabled: e.target.checked } })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-cyan-300 dark:peer-focus:ring-cyan-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600" />
+                <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Enable Embeddings (semantic search)</span>
+              </label>
+            </div>
+            <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5 mt-1.5 ml-1">
+              <span className="w-1 h-1 rounded-full bg-cyan-500" />
+              AI remembers past conversations and customer preferences across sessions
+            </p>
+          </div>
+        </motion.div>
+
+        {/* === PROACTIVE AGENT === */}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.32, type: 'spring', stiffness: 200 }}
+          className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[32px] p-8 shadow-lg hover:shadow-xl transition-all duration-500 group"
+        >
+          <div className="flex items-center gap-4 mb-8">
+            <motion.div
+              whileHover={{ scale: 1.1, rotate: -5 }}
+              className="w-12 h-12 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 flex items-center justify-center"
+            >
+              <Zap className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+            </motion.div>
+            <div>
+              <h3 className="text-xl font-black text-zinc-900 dark:text-white">Proactive Agent</h3>
+              <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Automated outbound triggers & campaigns</p>
+            </div>
+          </div>
+          <div className="space-y-5">
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.proactiveConfig?.enabled ?? false}
+                  onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, enabled: e.target.checked } })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600" />
+                <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Enable Proactive Engine</span>
+              </label>
+            </div>
+
+            {settings.proactiveConfig?.enabled && (
+              <div className="space-y-4 pl-2 border-l-2 border-amber-200 dark:border-amber-800 ml-1">
+                <div className="space-y-3">
+                  <p className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Triggers</p>
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.proactiveConfig?.abandonedCart?.enabled ?? true}
+                        onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, abandonedCart: { ...settings.proactiveConfig?.abandonedCart, enabled: e.target.checked } } })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600" />
+                      <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Abandoned Cart</span>
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.proactiveConfig?.reEngagement?.enabled ?? true}
+                        onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, reEngagement: { ...settings.proactiveConfig?.reEngagement, enabled: e.target.checked } } })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600" />
+                      <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Re-engagement (Inactive)</span>
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.proactiveConfig?.priceDrop?.enabled ?? true}
+                        onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, priceDrop: { ...settings.proactiveConfig?.priceDrop, enabled: e.target.checked } } })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600" />
+                      <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Price Drop Alerts</span>
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.proactiveConfig?.birthday?.enabled ?? true}
+                        onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, birthday: { ...settings.proactiveConfig?.birthday, enabled: e.target.checked } } })}
+                        className="sr-only peer"
+                      />
+                      <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:peer-focus:ring-amber-800 rounded-full peer dark:bg-zinc-700 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600" />
+                      <span className="ms-3 text-sm font-bold text-zinc-600 dark:text-zinc-400">Birthday Greetings</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Max per day</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={settings.proactiveConfig?.maxPerDay ?? 5}
+                      onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, maxPerDay: Number(e.target.value) || 5 } })}
+                      className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 rounded-2xl px-4 py-3 text-sm font-bold text-zinc-900 dark:text-white outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">Max per run</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={200}
+                      value={settings.proactiveConfig?.maxPerRun ?? 50}
+                      onChange={(e) => setSettings({ ...settings, proactiveConfig: { ...settings.proactiveConfig, maxPerRun: Number(e.target.value) || 50 } })}
+                      className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 rounded-2xl px-4 py-3 text-sm font-bold text-zinc-900 dark:text-white outline-none transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5 mt-1.5 ml-1">
+              <span className="w-1 h-1 rounded-full bg-amber-500" />
+              Schedules automated follow-ups every 15 minutes for abandoned carts, re-engagement, price drops, and birthdays
+            </p>
+          </div>
+        </motion.div>
+
+        {/* === PASSWORD CHANGE === */}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35, type: 'spring', stiffness: 200 }}
           className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[32px] p-8 shadow-lg hover:shadow-xl transition-all duration-500 group"
         >
           <div className="flex items-center gap-4 mb-8">
@@ -607,6 +794,16 @@ export default function Settings() {
               </div>
             </motion.button>
           </div>
+        </motion.div>
+
+        {/* === TWO-FACTOR AUTHENTICATION === */}
+        <motion.div
+          initial={{ opacity: 0, y: 40 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.37, type: 'spring', stiffness: 200 }}
+          className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-[32px] p-8 shadow-lg hover:shadow-xl transition-all duration-500 group"
+        >
+          <TwoFactorSetup />
         </motion.div>
 
         {/* === JAZZCASH ADVANCE PAYMENT === */}

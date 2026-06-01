@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Megaphone, Users, Send, AlertTriangle, Eye, Zap, Sparkles, Clock, CheckCircle2, Lock } from 'lucide-react';
+import { Skeleton } from './Skeleton';
 import { motion, AnimatePresence } from 'motion/react';
 import { useFeatures } from '../hooks/useFeatures';
 
@@ -148,7 +149,7 @@ export default function BroadcastManager({ onNavigate }: { onNavigate?: (tab: st
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-widest font-black text-zinc-400">Total Reach</p>
-              <p className="text-xl font-black text-zinc-900 dark:text-white">{customerCount || '...'}</p>
+              <p className="text-xl font-black text-zinc-900 dark:text-white">{customerCount !== null ? customerCount : <Skeleton className="h-7 w-16 inline-block" />}</p>
             </div>
           </div>
         </div>

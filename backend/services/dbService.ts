@@ -2,16 +2,16 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
-import { Session, Message, Product, Order, Deal, SalesState } from "../../src/types";
+import { Session, Message, Product, Order, Deal, SalesState, DripCampaign } from "../../src/types";
 
 let connectionString = process.env.DATABASE_URL || "";
 connectionString = connectionString.replace(/[?&]sslmode=[^&]*/g, "").replace(/[?&]$/, "");
 // Use transaction mode (port 6543) instead of session mode (5432) to avoid
 // PgBouncer connection slot exhaustion (pool_size: 15 limit)
 connectionString = connectionString.replace(":5432", ":6543");
-const pool = new pg.Pool({
+export const pool = new pg.Pool({
   connectionString,
-  ssl: { rejectUnauthorized: false },
+  ssl: { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" },
   max: 3,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
@@ -102,9 +102,20 @@ const defaultSettings = {
   smtpUser: "",
   smtpPass: "",
   emailReportsEnabled: true,
-  tiktok: null,
   subscription: null,
   aiLearningPatterns: null,
+  memoryConfig: { enabled: true, summarizationThreshold: 20, embeddingEnabled: true },
+  proactiveConfig: {
+    enabled: false,
+    maxPerDay: 5,
+    maxPerRun: 50,
+    quietStartHour: 21,
+    quietEndHour: 9,
+    abandonedCart: { enabled: true, hours: 24 },
+    reEngagement: { enabled: true, inactiveDays: 7 },
+    priceDrop: { enabled: true },
+    birthday: { enabled: true },
+  },
 };
 
 function toSession(record: any): Session {
@@ -161,7 +172,8 @@ const SETTINGS_FIELDS = [
 
 const SETTINGS_JSON_FIELDS = [
   "paymentConfig", "reEngagement", "facebook", "instagram",
-  "telegram", "tiktok", "subscription", "aiLearningPatterns",
+  "telegram", "subscription", "aiLearningPatterns", "memoryConfig",
+  "proactiveConfig", "teamMembers",
 ] as const;
 
 // In-memory cache for products (valid for 1 second)
@@ -285,7 +297,7 @@ export const dbService = {
   },
 
   async getProductCount(adminId: string): Promise<number> {
-    return withRetry(() => prisma.product.count({ where: { adminId } }));
+    return withRetry(() => prisma.product.count({ where: { adminId, deleted: false } }));
   },
 
   async getAllProducts(adminId: string): Promise<Product[]> {
@@ -297,7 +309,7 @@ export const dbService = {
     }
     try {
       const records = await withRetry(() =>
-        prisma.product.findMany({ where: { adminId } })
+        prisma.product.findMany({ where: { adminId, deleted: false } })
       );
       const result = records.map((r: any) => ({
         id: r.id,
@@ -307,6 +319,7 @@ export const dbService = {
         features: r.features,
         images: r.images,
         videos: r.videos,
+        stock: r.stock ?? 10,
       }));
       // Store in cache
       productCache.set(adminId, { data: result, ts: now });
@@ -323,12 +336,12 @@ export const dbService = {
     const [records, total] = await withRetry(() =>
       Promise.all([
         prisma.product.findMany({
-          where: { adminId },
+          where: { adminId, deleted: false },
           skip,
           take: limit,
           orderBy: { id: "asc" },
         }),
-        prisma.product.count({ where: { adminId } }),
+        prisma.product.count({ where: { adminId, deleted: false } }),
       ])
     );
     return {
@@ -340,6 +353,7 @@ export const dbService = {
         features: r.features,
         images: r.images,
         videos: r.videos,
+        stock: r.stock ?? 10,
       })),
       total,
       page,
@@ -359,12 +373,13 @@ export const dbService = {
           features: product.features || [],
           images: product.images || [],
           videos: product.videos || [],
+          stock: (product as any).stock ?? 10,
         },
       })
     );
     // Invalidate cache after insertion
     productCache.delete(adminId);
-    return { id: record.id, ...product };
+    return { id: record.id, ...product, stock: (product as any).stock ?? 10 };
   },
 
   async updateProduct(adminId: string, id: string, data: Partial<Product>) {
@@ -378,13 +393,32 @@ export const dbService = {
     productCache.delete(adminId);
   },
 
-  async deleteProduct(adminId: string, id: string) {
+  async softDeleteProduct(adminId: string, id: string) {
+    await withRetry(() =>
+      prisma.product.updateMany({
+        where: { id, adminId },
+        data: { deleted: true, deletedAt: new Date() },
+      })
+    );
+    productCache.delete(adminId);
+  },
+
+  async restoreProduct(adminId: string, id: string) {
+    await withRetry(() =>
+      prisma.product.updateMany({
+        where: { id, adminId },
+        data: { deleted: false, deletedAt: null },
+      })
+    );
+    productCache.delete(adminId);
+  },
+
+  async permanentDeleteProduct(adminId: string, id: string) {
     await withRetry(() =>
       prisma.product.deleteMany({
         where: { id, adminId },
       })
     );
-    // Invalidate cache after deletion
     productCache.delete(adminId);
   },
 
@@ -394,7 +428,7 @@ export const dbService = {
   async getAllDeals(adminId: string): Promise<Deal[]> {
     const records = await withRetry(() =>
       prisma.deal.findMany({
-        where: { adminId },
+        where: { adminId, deleted: false },
         orderBy: { createdAt: "desc" },
       })
     );
@@ -460,12 +494,58 @@ export const dbService = {
     );
   },
 
-  async deleteDeal(adminId: string, id: string) {
+  async softDeleteDeal(adminId: string, id: string) {
+    await withRetry(() =>
+      prisma.deal.updateMany({
+        where: { id, adminId },
+        data: { deleted: true, deletedAt: new Date() },
+      })
+    );
+  },
+
+  async restoreDeal(adminId: string, id: string) {
+    await withRetry(() =>
+      prisma.deal.updateMany({
+        where: { id, adminId },
+        data: { deleted: false, deletedAt: null },
+      })
+    );
+  },
+
+  async permanentDeleteDeal(adminId: string, id: string) {
     await withRetry(() =>
       prisma.deal.deleteMany({
         where: { id, adminId },
       })
     );
+  },
+
+  async getOrdersPaginated(adminId: string, page: number, pageSize: number): Promise<{ orders: Order[]; total: number }> {
+    const offset = (page - 1) * pageSize;
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM "Order" WHERE "adminId" = $1`,
+      [adminId]
+    );
+    const total = parseInt(countResult.rows[0].count, 10) || 0;
+    const dataResult = await pool.query(
+      `SELECT * FROM "Order" WHERE "adminId" = $1 ORDER BY "createdAt" DESC LIMIT $2 OFFSET $3`,
+      [adminId, pageSize, offset]
+    );
+    return { orders: dataResult.rows.map(toOrder), total };
+  },
+
+  async getMessagesPaginated(adminId: string, sessionId: string, page: number, pageSize: number): Promise<{ messages: Message[]; total: number }> {
+    const offset = (page - 1) * pageSize;
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM "Message" WHERE "adminId" = $1 AND "sessionId" = $2`,
+      [adminId, sessionId]
+    );
+    const total = parseInt(countResult.rows[0].count, 10) || 0;
+    const dataResult = await pool.query(
+      `SELECT * FROM "Message" WHERE "adminId" = $1 AND "sessionId" = $2 ORDER BY "timestamp" ASC LIMIT $3 OFFSET $4`,
+      [adminId, sessionId, pageSize, offset]
+    );
+    return { messages: dataResult.rows.map(toMessage), total };
   },
 
   async getAllOrders(adminId: string): Promise<Order[]> {
@@ -576,6 +656,27 @@ export const dbService = {
     };
   },
 
+  async getSessionsPaginated(adminId: string, page: number, pageSize: number, state?: string): Promise<{ sessions: Session[]; total: number }> {
+    const offset = (page - 1) * pageSize;
+    let whereClause = `"adminId" = $1`;
+    const params: any[] = [adminId];
+    if (state) {
+      whereClause += ` AND "state" = $2`;
+      params.push(state);
+    }
+    const countResult = await pool.query(
+      `SELECT COUNT(*) FROM "Session" WHERE ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].count, 10) || 0;
+    params.push(pageSize, offset);
+    const dataResult = await pool.query(
+      `SELECT * FROM "Session" WHERE ${whereClause} ORDER BY "lastMessageAt" DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    return { sessions: dataResult.rows.map(toSession), total };
+  },
+
   async getRecentSessions(adminId: string, limit: number): Promise<Session[]> {
     const records = await withRetry(() =>
       prisma.session.findMany({
@@ -600,6 +701,161 @@ export const dbService = {
       })
     );
     return records.map(toSession);
+  },
+
+  // ==========================================
+  // PROACTIVE ENGINE HELPERS
+  // ==========================================
+  async getSessionsByState(adminId: string, states: SalesState[], excludeBlocked = true): Promise<Session[]> {
+    try {
+      const records = await withRetry(() =>
+        prisma.session.findMany({
+          where: {
+            adminId,
+            state: { in: states },
+            ...(excludeBlocked ? { isBlocked: false } : {}),
+          },
+          orderBy: { lastMessageAt: "desc" },
+        })
+      );
+      return records.map(toSession);
+    } catch { return []; }
+  },
+
+  async getCustomersWithBirthdays(adminId: string): Promise<Session[]> {
+    try {
+      const today = new Date();
+      const mmdd = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      const result = await pool.query(
+        `SELECT * FROM "Session" WHERE "adminId" = $1 AND "isBlocked" = false AND "metadata"->>'birthday' LIKE $2`,
+        [adminId, `%${mmdd}%`]
+      );
+      return (result.rows || []).map(toSession);
+    } catch { return []; }
+  },
+
+  async getSessionsForDripCampaign(adminId: string, trigger: string): Promise<Session[]> {
+    const statesMap: Record<string, SalesState[]> = {
+      abandoned_cart: [SalesState.PRODUCT_SELECTED, SalesState.NEGOTIATING],
+      new_session: [SalesState.NEW],
+      post_purchase: [SalesState.ORDER_CONFIRMED, SalesState.DELIVERED],
+      manual: [],
+    };
+    const targetStates = statesMap[trigger] || [];
+    if (targetStates.length === 0) return [];
+    return this.getSessionsByState(adminId, targetStates);
+  },
+
+  // ==========================================
+  // DRIP CAMPAIGN CRUD
+  // ==========================================
+  async getCampaigns(adminId: string): Promise<DripCampaign[]> {
+    try {
+      const records = await withRetry(() =>
+        prisma.dripCampaign.findMany({
+          where: { adminId },
+          orderBy: { createdAt: "desc" },
+        })
+      );
+      return records.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        trigger: r.trigger,
+        enabled: r.enabled,
+        steps: r.steps as any[],
+        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+      }));
+    } catch { return []; }
+  },
+
+  async addCampaign(adminId: string, data: Omit<DripCampaign, "id" | "createdAt">): Promise<DripCampaign> {
+    const record = await withRetry(() =>
+      prisma.dripCampaign.create({
+        data: {
+          adminId,
+          name: data.name,
+          trigger: data.trigger,
+          enabled: data.enabled ?? true,
+          steps: data.steps as any || [],
+        },
+      })
+    );
+    return {
+      id: record.id,
+      name: record.name,
+      trigger: record.trigger as DripCampaign["trigger"],
+      enabled: record.enabled,
+      steps: record.steps as any[],
+      createdAt: record.createdAt instanceof Date ? record.createdAt.toISOString() : record.createdAt,
+    };
+  },
+
+  async updateCampaign(adminId: string, id: string, data: Partial<DripCampaign>) {
+    const updateData: any = { ...data };
+    delete updateData.id;
+    delete updateData.createdAt;
+    await withRetry(() =>
+      prisma.dripCampaign.updateMany({
+        where: { id, adminId },
+        data: updateData,
+      })
+    );
+  },
+
+  async deleteCampaign(adminId: string, id: string) {
+    await withRetry(() =>
+      prisma.dripCampaign.deleteMany({
+        where: { id, adminId },
+      })
+    );
+  },
+
+  // ==========================================
+  // RECOMMENDATION HELPERS
+  // ==========================================
+  async getCrossSellProductIds(adminId: string, productId: string, limit = 3): Promise<string[]> {
+    try {
+      const result = await pool.query(
+        `SELECT o2."productId", COUNT(*) as frequency
+         FROM "Order" o1
+         JOIN "Order" o2 ON o1."userId" = o2."userId" AND o1."productId" != o2."productId"
+         WHERE o1."productId" = $1 AND o1."adminId" = $2 AND o2."adminId" = $2
+           AND o1."status" IN ('VERIFIED', 'DELIVERED')
+         GROUP BY o2."productId"
+         ORDER BY frequency DESC
+         LIMIT $3`,
+        [productId, adminId, limit]
+      );
+      return result.rows.map(r => r.productId);
+    } catch { return []; }
+  },
+
+  async getCustomerOrderedProductIds(adminId: string, userId: string): Promise<string[]> {
+    try {
+      const result = await pool.query(
+        `SELECT "productId" FROM "Order" WHERE "adminId" = $1 AND "userId" = $2 AND "status" IN ('VERIFIED', 'DELIVERED')`,
+        [adminId, userId]
+      );
+      return result.rows.map(r => r.productId);
+    } catch { return []; }
+  },
+
+  async getDailyProactiveCount(adminId: string, userId: string): Promise<number> {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    try {
+      const result = await withRetry(() =>
+        prisma.session.findUnique({
+          where: { adminId_id: { adminId, id: userId } },
+          select: { lastReminderAt: true, remindersCount: true },
+        })
+      );
+      if (!result || !result.lastReminderAt) return 0;
+      if (result.lastReminderAt >= todayStart) {
+        return result.remindersCount || 0;
+      }
+      return 0;
+    } catch { return 0; }
   },
 
   // ==========================================

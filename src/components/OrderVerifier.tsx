@@ -3,6 +3,7 @@ import axios from 'axios';
 import { SalesState, Session, formatUserId } from '../types';
 import { CheckCircle, XCircle, Eye, CornerUpLeft, Truck, Send, Loader2, Calendar, DollarSign, CreditCard, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import SearchBar from './SearchBar';
 
 export default function OrderVerifier() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -12,11 +13,18 @@ export default function OrderVerifier() {
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
+  const [search, setSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState<string>('all');
 
   const fetchSessions = async () => {
     try {
-      const res = await axios.get('/api/sessions');
-      const verificationSessions = res.data.filter((s: Session) => 
+      const params = new URLSearchParams();
+      if (stateFilter && stateFilter !== 'all') params.set('state', stateFilter);
+      if (search) params.set('search', search);
+      const qs = params.toString();
+      const res = await axios.get(`/api/sessions${qs ? `?${qs}` : ''}`);
+      const allSessions: Session[] = res.data.data ?? res.data;
+      const verificationSessions = allSessions.filter((s: Session) => 
         [SalesState.PAYMENT_AWAITING, SalesState.PAYMENT_SENT, SalesState.VERIFIED, SalesState.ORDER_CONFIRMED].includes(s.state)
       );
       
@@ -28,9 +36,9 @@ export default function OrderVerifier() {
 
   useEffect(() => {
     fetchSessions();
-    const interval = setInterval(fetchSessions, 5000);
+    const interval = setInterval(fetchSessions, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [search, stateFilter]);
 
   const handleVerify = async (userId: string) => {
     try {
@@ -114,6 +122,24 @@ export default function OrderVerifier() {
         <h2 className="text-3xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-zinc-900 to-zinc-500 dark:from-white dark:to-zinc-400">Payment & Order Verification</h2>
         <p className="text-zinc-500 dark:text-zinc-400 italic font-serif mt-2 transition-colors">Directly control the lifecycle of customer conversions</p>
       </header>
+
+      {/* Search & Filter Controls */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1 max-w-sm">
+          <SearchBar value={search} onChange={setSearch} placeholder="Search by userId..." />
+        </div>
+        <select
+          value={stateFilter}
+          onChange={e => setStateFilter(e.target.value)}
+          className="px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+        >
+          <option value="all">All States</option>
+          <option value="PAYMENT_AWAITING">Payment Awaiting</option>
+          <option value="PAYMENT_SENT">Payment Sent</option>
+          <option value="VERIFIED">Verified</option>
+          <option value="ORDER_CONFIRMED">Order Confirmed</option>
+        </select>
+      </div>
 
       {/* Image Viewer Modal */}
       <AnimatePresence>

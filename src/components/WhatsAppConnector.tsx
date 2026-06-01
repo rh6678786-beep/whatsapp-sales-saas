@@ -48,7 +48,7 @@ export default function WhatsAppConnector() {
   useEffect(() => {
     axios.post('/api/whatsapp/init').catch(console.error);
     fetchStatus();
-    const interval = setInterval(fetchStatus, 2000);
+    const interval = setInterval(fetchStatus, 5000);
     return () => clearInterval(interval);
   }, []);
 

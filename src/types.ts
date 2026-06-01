@@ -53,6 +53,7 @@ export interface Product {
   features: string[];
   images: string[];
   videos?: string[];
+  stock?: number;
 }
 
 export interface Session {
@@ -70,7 +71,7 @@ export interface Session {
 export interface Message {
   id?: string;
   sessionId: string;
-  role: 'user' | 'model';
+  role: 'user' | 'model' | 'human';
   text: string;
   timestamp: string;
   imageUrl?: string;
@@ -91,6 +92,47 @@ export interface Order {
   createdAt: string;
   trackingId?: string;
   courier?: string;
+}
+
+export interface DripCampaignStep {
+  day: number;
+  message: string;
+  aiGenerated?: boolean;
+}
+
+export interface DripCampaign {
+  id: string;
+  adminId?: string;
+  name: string;
+  trigger: 'abandoned_cart' | 'new_session' | 'post_purchase' | 'manual';
+  enabled: boolean;
+  steps: DripCampaignStep[];
+  createdAt?: string;
+}
+
+export interface ProactiveConfig {
+  enabled: boolean;
+  maxPerDay: number;
+  maxPerRun: number;
+  quietStartHour: number;
+  quietEndHour: number;
+  abandonedCart: {
+    enabled: boolean;
+    hours: number;
+    message?: string;
+  };
+  reEngagement: {
+    enabled: boolean;
+    inactiveDays: number;
+  };
+  priceDrop: {
+    enabled: boolean;
+    message?: string;
+  };
+  birthday: {
+    enabled: boolean;
+    message?: string;
+  };
 }
 
 export function formatUserId(userId: string): string {

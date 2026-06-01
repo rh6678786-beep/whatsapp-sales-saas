@@ -4,6 +4,11 @@ import { Message, SalesState, Session } from "../../src/types";
 import { LeadQualificationService } from "./leadQualificationService";
 import { getSubscriptionStatus } from "./stripeService";
 import { queueMessage } from "./aiRetryQueue";
+import { generateEmbedding, storeEmbedding, searchSimilar } from "./embeddingService";
+import { getLatestSummary, generateConversationSummary, extractCustomerPreferences, storeSummary, shouldGenerateSummary } from "./summarizationService";
+import { getFullProductRecommendations } from "./recommendationService";
+import { checkEscalationTriggers, isHandoffActive } from "./escalationService";
+import { AILearningService } from "./aiLearningService";
 
 interface SimulatorData {
   session: Session;
@@ -107,17 +112,56 @@ export async function processIncomingMessage(
       await dbService.addMessage(adminId, userId, userMsg);
     }
 
-    // 5. Generate AI Response
+    // 5. Handoff Check — skip AI if handoff is active
+    if (!isSimulator && isHandoffActive(session)) {
+      console.log(`[HANDOFF][${adminId}] Handoff active for ${userId}, skipping AI response`);
+      return { text: "", images: [], videos: [] };
+    }
+
+    // 6. Memory & Context Retrieval (RAG)
+    const memoryConfig = settings.memoryConfig || { enabled: true, summarizationThreshold: 20, embeddingEnabled: true };
+    let memorySummary: string | null = null;
+    let memoryPreferences: Record<string, any> = {};
+    let similarContexts: { text: string; role: string; sessionId: string; similarity: number }[] = [];
+
+    if (memoryConfig.enabled && !isSimulator) {
+      // Get latest summary for this session
+      const summary = await getLatestSummary(adminId, userId);
+      if (summary) {
+        memorySummary = summary.summary;
+        memoryPreferences = summary.customerPreferences || {};
+      }
+
+      // Generate embedding + search similar conversations (fire-and-forget the storage)
+      if (memoryConfig.embeddingEnabled && body) {
+        const embedding = await generateEmbedding(body, adminId);
+        if (embedding) {
+          similarContexts = await searchSimilar(adminId, embedding, 3);
+        }
+      }
+    }
+
+    const retrievedContext = {
+      summary: memorySummary,
+      preferences: memoryPreferences,
+      similarContexts,
+    };
+
+    // 6. Get smart product recommendations + Generate AI Response
+    const recommendations = await getFullProductRecommendations(adminId, body, session);
+    const topProducts = recommendations.all.length > 0 ? recommendations.all : products.slice(0, 10);
+
     const responseText = await generateSalesResponse(
       adminId,
       session.state,
       history,
       body,
-      products.slice(0, 10),
+      topProducts,
       mediaBase64,
       mimeType,
       "Customer",
-      qualifiedSession
+      qualifiedSession,
+      retrievedContext
     );
 
     // If AI unavailable (all models failed), send fallback + queue for retry
@@ -132,7 +176,32 @@ export async function processIncomingMessage(
       return { text: "Sorry, I'm a bit busy right now. I'll get back to you shortly!" };
     }
 
-    // 6. Post-processing Actions
+    // 6b. Check escalation triggers (AI-suggested or rule-based)
+    if (!isSimulator && !session.metadata?.handoffTriggered) {
+      const escalation = checkEscalationTriggers(session, responseText);
+      if (escalation.shouldEscalate) {
+        console.log(`[HANDOFF][${adminId}] Escalation triggered for ${userId}: ${escalation.reason} (${escalation.triggerSource})`);
+        session.metadata = {
+          ...session.metadata,
+          handoffTriggered: true,
+          handoffReason: escalation.reason,
+          handoffSummary: escalation.summary || null,
+          aiPaused: true,
+        };
+        await dbService.updateSession(adminId, userId, { metadata: session.metadata } as any);
+      }
+    }
+
+    // 6c. AI Pattern Learning (fire-and-forget)
+    if (!isSimulator) {
+      const score = session.metadata?.leadScore || 0;
+      const status = (session.metadata?.leadStatus || 'COLD') as 'HOT' | 'WARM' | 'COLD';
+      AILearningService.initialize(adminId).then(() => {
+        AILearningService.analyzeChat(body, responseText, score, status, adminId);
+      }).catch(() => {});
+    }
+
+    // 7. Post-processing Actions
     let shouldBlock = false;
     let imagesToSend: string[] = [];
     let videosToSend: string[] = [];
@@ -182,7 +251,7 @@ export async function processIncomingMessage(
       }
     }
 
-    // 7. Save Model Response
+    // 8. Save Model Response
     const cleanResponse = responseText.replace(/\[.*?\]/g, "").trim();
     const modelMsg: Message = {
       sessionId: userId,
@@ -211,6 +280,43 @@ export async function processIncomingMessage(
           };
           await dbService.addMessage(adminId, userId, videoMsg);
         }
+      }
+
+      // 9. Memory Persistence (fire-and-forget, non-blocking)
+      if (memoryConfig.enabled) {
+        const totalMessages = history.length + 1; // +1 for current user message
+
+        // Store embedding for user message
+        if (memoryConfig.embeddingEnabled && body) {
+          const userMsgId = userMsg.id || `${adminId}:${userId}:${now}`;
+          generateEmbedding(body, adminId).then(emb => {
+            if (emb) storeEmbedding(adminId, userId, userMsgId, "user", body, emb);
+          }).catch(() => {});
+        }
+
+        // Store embedding for AI response
+        if (memoryConfig.embeddingEnabled && cleanResponse) {
+          const modelMsgId = modelMsg.id || `${adminId}:${userId}:${now + 1}`;
+          generateEmbedding(cleanResponse, adminId).then(emb => {
+            if (emb) storeEmbedding(adminId, userId, modelMsgId, "model", cleanResponse, emb);
+          }).catch(() => {});
+        }
+
+        // Trigger summarization at threshold
+        const lastCount = (session.metadata as any)?.messageCount || 0;
+        shouldGenerateSummary(totalMessages, lastCount).then(should => {
+          if (should) {
+            dbService.getMessages(adminId, userId).then(async (allMessages) => {
+              const [summary, preferences] = await Promise.all([
+                generateConversationSummary(adminId, userId, allMessages),
+                extractCustomerPreferences(adminId, userId, allMessages),
+              ]);
+              if (summary) {
+                await storeSummary(adminId, userId, summary, totalMessages, preferences);
+              }
+            }).catch(() => {});
+          }
+        }).catch(() => {});
       }
     }
 
