@@ -3,7 +3,9 @@ import { AuthenticatedRequest } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import { generateOTP, hashOTP, sendOTPEmail, storeOTP, verifyOTP } from "../services/twoFactorService.js";
 import { dbService } from "../services/dbService.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:2fa");
 const router = Router();
 
 router.post("/auth/2fa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
@@ -18,15 +20,16 @@ router.post("/auth/2fa/send", requireAuth, async (req: AuthenticatedRequest, res
     const otp = generateOTP();
     const otpHash = await hashOTP(otp);
     await storeOTP(adminId, email, otpHash);
-    await sendOTPEmail(email, otp, settings.storeName || "Sales Agent");
+    await sendOTPEmail(email, otp, settings.storeName || "Sales Agent", adminId);
 
+    // NEVER leak OTP in response — even in development mode
     res.json({
       success: true,
       message: "Verification code sent to your email",
-      ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    log.error({ err: error, adminId: req.adminId }, "2FA send failed");
+    res.status(500).json({ error: "Failed to send verification code. Please try again." });
   }
 });
 
@@ -45,7 +48,8 @@ router.post("/auth/2fa/verify", requireAuth, async (req: AuthenticatedRequest, r
     const token = generateToken(adminId);
     res.json({ success: true, token });
   } catch (error: any) {
-    res.status(500).json({ error: error.message });
+    log.error({ err: error, adminId: req.adminId }, "2FA verify failed");
+    res.status(500).json({ error: "Verification failed. Please try again." });
   }
 });
 

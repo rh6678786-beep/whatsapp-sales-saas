@@ -1,8 +1,16 @@
 import { GoogleGenAI } from "@google/genai";
 import { SalesState, Product, Message } from "../../src/types";
-import { dbService } from "./dbService";
-import { logAiDlq } from "./aiDlqService";
-import { executeWithCircuitBreaker } from "../config/aiCircuitBreaker";
+import { dbService } from "./dbService.js";
+import { logAiDlq } from "./aiDlqService.js";
+import { executeWithCircuitBreaker } from "../config/aiCircuitBreaker.js";
+import { createInputGuard } from "../lib/promptGuard.js";
+import { checkOutputSafety } from "../lib/outputGuard.js";
+import { createTokenBudgetTracker } from "../lib/tokenBudget.js";
+import { buildContextString } from "../lib/contextFilter.js";
+import { createChildLogger } from "../lib/logger.js";
+import { env } from "../lib/env.js";
+
+const log = createChildLogger("ai:service");
 
 const LANGUAGE_MAP: Record<string, { name: string; instruction: string; adminActionInstruction: string }> = {
   ur: {
@@ -134,11 +142,32 @@ EXAMPLES (match this style precisely):
   },
 };
 
+// Max input sizes to prevent token overflow
+const MAX_USER_MESSAGE_LENGTH = 4000;
+const MAX_HISTORY_MESSAGES = 10;
+const MAX_SYSTEM_PROMPT_LENGTH = 50000;
+
 // Fallback models when primary model is unavailable (503)
 const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"];
 
 // Map of AI clients per adminId
-const aiClients: Map<string, { client: GoogleGenAI; apiKey: string }> = new Map();
+const aiClients: Map<string, { client: GoogleGenAI; apiKey: string; lastUsed: number }> = new Map();
+
+// Periodic cleanup of unused AI clients (every 30 minutes)
+const AI_CLIENT_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const AI_CLIENT_CLEANUP_INTERVAL = setInterval(() => {
+  const now = Date.now();
+  for (const [adminId, entry] of aiClients) {
+    if (now - entry.lastUsed > AI_CLIENT_MAX_AGE_MS) {
+      aiClients.delete(adminId);
+      log.debug({ adminId }, "AI client evicted from cache");
+    }
+  }
+}, 30 * 60 * 1000);
+
+if (process.env.VITEST || process.env.NODE_ENV === "test") {
+  clearInterval(AI_CLIENT_CLEANUP_INTERVAL);
+}
 
 // Per-admin AI request queue with rate limiting (free tier: ~60 req/min)
 const aiQueues: Map<string, Promise<any>> = new Map();
@@ -155,7 +184,8 @@ async function enqueueAIRequest<T>(adminId: string, fn: () => Promise<T>): Promi
     }
     lastRequestTime.set(adminId, Date.now());
     return fn();
-  }, async () => {
+  }).catch(async () => {
+    // On rejection, still enforce delay and retry
     const last = lastRequestTime.get(adminId) || 0;
     const elapsed = Date.now() - last;
     if (elapsed < MIN_AI_DELAY_MS) {
@@ -164,29 +194,36 @@ async function enqueueAIRequest<T>(adminId: string, fn: () => Promise<T>): Promi
     lastRequestTime.set(adminId, Date.now());
     return fn();
   });
-  aiQueues.set(adminId, next);
+  aiQueues.set(adminId, next.catch((queueErr) => { log.debug({ err: queueErr, adminId }, "Queue item rejected (already handled by caller)"); })); // Prevent rejected promise from blocking queue
   return next;
 }
 
 export async function getAIClient(adminId: string) {
   const settings = await dbService.getSettings(adminId);
-  const apiKey = settings.geminiApiKey;
+  const apiKey = settings.geminiApiKey || env.GEMINI_API_KEY;
 
   if (!apiKey) {
-    console.warn(`[AI][${adminId}] GEMINI_API_KEY is not set.`);
+    log.warn({ adminId }, "No API key configured for admin and no global fallback");
     return null;
   }
 
   const existing = aiClients.get(adminId);
-  if (!existing || existing.apiKey !== apiKey) {
+  const cacheKey = apiKey;
+  if (!existing || existing.apiKey !== cacheKey) {
     const client = new GoogleGenAI({ apiKey });
-    aiClients.set(adminId, { client, apiKey });
+    aiClients.set(adminId, { client, apiKey: cacheKey, lastUsed: Date.now() });
     return client;
   }
+  existing.lastUsed = Date.now();
   return existing.client;
 }
 
 const AI_TIMEOUT_MS = 60000;
+
+function truncateString(str: string, maxLen: number): string {
+  if (str.length <= maxLen) return str;
+  return str.slice(0, maxLen - 3) + "...";
+}
 
 async function generateWithRetry(
   ai: GoogleGenAI,
@@ -196,35 +233,41 @@ async function generateWithRetry(
   adminId: string,
   maxRetries = 2
 ): Promise<string | null> {
+  // Validate input sizes
+  if (typeof contents === "string" && contents.length > MAX_USER_MESSAGE_LENGTH) {
+    log.warn({ adminId, len: contents.length }, "User message truncated");
+    contents = truncateString(contents, MAX_USER_MESSAGE_LENGTH);
+  }
+  if (systemPrompt.length > MAX_SYSTEM_PROMPT_LENGTH) {
+    log.warn({ adminId, len: systemPrompt.length }, "System prompt truncated");
+    systemPrompt = truncateString(systemPrompt, MAX_SYSTEM_PROMPT_LENGTH);
+  }
+
   const modelsToTry = [model, ...FALLBACK_MODELS.filter(m => m !== model)];
   for (let modelIndex = 0; modelIndex < modelsToTry.length; modelIndex++) {
     const currentModel = modelsToTry[modelIndex];
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
         const response = await ai.models.generateContent({
           model: currentModel,
           contents,
           config: { systemInstruction: systemPrompt, temperature: 0.7 },
-          abortSignal: controller.signal,
-        } as any);
-        clearTimeout(timeoutId);
-        return response.text;
+        });
+        return response.text ?? null;
       } catch (error: any) {
         const message = error?.message || String(error);
         const isTimeout = error?.name === 'AbortError' || message.includes('timed out') || message.includes('abort');
         const isRetryable = message.includes("429") || message.includes("quota") || message.includes("RESOURCE_EXHAUSTED") || message.includes("5") || message.includes("timeout") || message.includes("ECONNRESET") || message.includes("network") || isTimeout;
         if (!isRetryable) {
-          console.error(`[AI ERROR][${adminId}] Model=${currentModel} Attempt=${attempt}/${maxRetries} Non-retryable`, message);
+          log.error({ err: message, adminId, model: currentModel, attempt, maxRetries }, "Non-retryable AI error");
           return null;
         }
         if (attempt < maxRetries) {
           const delayMs = Math.min(2000 * Math.pow(2, attempt), 15000);
-          console.log(`[AI RETRY][${adminId}] Model=${currentModel} Retry ${attempt}/${maxRetries} in ${delayMs}ms`);
+          log.warn({ adminId, model: currentModel, attempt, maxRetries, delayMs }, "Retrying AI request");
           await new Promise(r => setTimeout(r, delayMs));
         } else {
-          console.warn(`[AI FALLBACK][${adminId}] Model=${currentModel} failed after ${maxRetries} retries, trying next model...`);
+          log.warn({ adminId, model: currentModel, maxRetries, nextModel: modelsToTry[modelIndex + 1] }, "Falling back to next model");
           if (modelIndex < modelsToTry.length - 1) {
             await new Promise(r => setTimeout(r, 1000));
           }
@@ -406,16 +449,29 @@ Customer's Last Message: "${lastMessage}"
 ${dealsSection}`;
 
   if (!ai) {
-    return "Hello! How can I help you today? 😊";
+    return "Hello! How can I help you today?";
   }
 
+  // Check user input for prompt injection
+  const inputGuard = createInputGuard(adminId);
+  const contentCheck = inputGuard.check(lastMessage);
+  if (!contentCheck.safe) {
+    log.warn({ adminId, userId: lastMessage.substring(0, 30) }, "Prompt injection blocked");
+    await logAiDlq(adminId, "generateSalesResponse", { lastMessage }, "Prompt injection detected");
+    return null;
+  }
+
+  // Track token budget
+  const tokenBudget = createTokenBudgetTracker("generateSalesResponse");
+  tokenBudget.trackInput(systemPrompt);
+
   return executeWithCircuitBreaker(adminId, 'generateSalesResponse', async () => {
-    let contents: any = lastMessage || "I sent a message.";
+    let contents: any = contentCheck.sanitized || "I sent a message.";
 
     if (mediaBase64 && mimeType) {
       contents = [
         { inlineData: { data: mediaBase64, mimeType: mimeType } },
-        { text: lastMessage || "Analyze this." }
+        { text: contentCheck.sanitized || "Analyze this." }
       ];
     }
 
@@ -427,7 +483,18 @@ ${dealsSection}`;
       adminId
     );
 
-    if (text) return text;
+    if (text) {
+      tokenBudget.trackOutput(text);
+
+      // Validate AI output before returning
+      const outputCheck = checkOutputSafety(text);
+      if (!outputCheck.approved) {
+        log.warn({ adminId, flags: outputCheck.flags }, "Output guard blocked unsafe response");
+        await logAiDlq(adminId, "generateSalesResponse:output", { text, flags: outputCheck.flags }, "Output guard blocked");
+        return outputCheck.cleaned;
+      }
+      return text;
+    }
     return null;
   });
 }
@@ -470,6 +537,9 @@ FINAL CHECK:
 - Would the customer feel genuinely cared for, not mass-notified?
 - NO system language, NO buzzwords, NO corporate speak.`;
 
+  const tokenBudget = createTokenBudgetTracker("generateAdminActionMessage");
+  tokenBudget.trackInput(systemPrompt);
+
   return executeWithCircuitBreaker(adminId, 'generateSalesResponse', async () => {
     const text = await generateWithRetry(
       ai,
@@ -478,6 +548,15 @@ FINAL CHECK:
       systemPrompt,
       adminId
     );
+
+    if (text) {
+      tokenBudget.trackOutput(text);
+      const outputCheck = checkOutputSafety(text);
+      if (!outputCheck.approved) {
+        log.warn({ adminId, flags: outputCheck.flags }, "Admin action output blocked");
+        return outputCheck.cleaned;
+      }
+    }
     return text;
   });
 }
@@ -517,15 +596,30 @@ FORMAT:
 
 [3-5 hashtags — mix of broad + niche, trending where relevant]`;
 
+  const inputGuard = createInputGuard(adminId);
+  const inputCheck = inputGuard.check(text);
+
+  const tokenBudget = createTokenBudgetTracker("generateEnhancedPost");
+  tokenBudget.trackInput(systemPrompt);
+  tokenBudget.trackInput(text);
+
   try {
     const response = await ai.models.generateContent({
       model: settings.geminiModel || "gemini-2.0-flash",
-      contents: [{ text: `Enhance this raw text: "${text}"` }],
+      contents: [{ text: `Enhance this raw text: "${inputCheck.sanitized}"` }],
       config: { systemInstruction: systemPrompt, temperature: 0.8 },
     } as any);
-    return response.text || text;
+    const output = response.text || text;
+    tokenBudget.trackOutput(output);
+
+    const outputCheck = checkOutputSafety(output);
+    if (!outputCheck.approved) {
+      log.warn({ adminId, flags: outputCheck.flags }, "Enhanced post output blocked");
+      return outputCheck.cleaned;
+    }
+    return output;
   } catch (error) {
-    console.error("[AI POST ENHANCE ERROR]", error);
+    log.error({ err: error, adminId }, "Post enhancement error");
     return text;
   }
 }

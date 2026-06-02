@@ -6,7 +6,9 @@ import { checkLimit } from "../services/stripeService.js";
 import { logAction } from "../services/auditLogService.js";
 import { validate } from "../middleware/validate.js";
 import { createProductSchema, updateProductSchema } from "../schemas/product.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:products");
 const router = Router();
 
 router.get("/products", async (req, res) => {
@@ -69,7 +71,7 @@ router.post("/products", validate(createProductSchema), async (req, res) => {
     console.log(`[PRODUCTS_POST] Adding product...`);
     const product = await dbService.addProduct(adminId, req.body);
     console.log(`[PRODUCTS_POST] Product added:`, product.id);
-    logAction(adminId, "create", "product", product.id, { name: req.body.name, price: req.body.price }, req.ip).catch(() => {});
+    logAction(adminId, "create", "product", product.id, { name: req.body.name, price: req.body.price }, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     import("../services/recommendationService.js").then(async ({ getProductEmbeddingText }) => {
       const { generateEmbedding } = await import("../services/embeddingService.js");
       const { pool } = await import("../services/dbService.js");
@@ -96,7 +98,7 @@ router.patch("/products/:id", validate(updateProductSchema), async (req, res) =>
   try {
     const adminId = getAdminId(req);
     await dbService.updateProduct(adminId, req.params.id, req.body);
-    logAction(adminId, "update", "product", req.params.id, { updates: Object.keys(req.body) }, req.ip).catch(() => {});
+    logAction(adminId, "update", "product", req.params.id, { updates: Object.keys(req.body) }, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     import("../services/recommendationService.js").then(async ({ getProductEmbeddingText }) => {
       const { generateEmbedding } = await import("../services/embeddingService.js");
       const { pool } = await import("../services/dbService.js");
@@ -131,7 +133,7 @@ router.delete("/products/batch", requireAuth, async (req: AuthenticatedRequest, 
     }
     for (const id of ids) {
       await dbService.permanentDeleteProduct(adminId, id);
-      logAction(adminId, "delete", "product", id, undefined, req.ip).catch(() => {});
+      logAction(adminId, "delete", "product", id, undefined, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
       pool.query(`DELETE FROM product_embeddings WHERE admin_id = $1 AND product_id = $2`, [adminId, id])
         .catch(e => console.error("[PRODUCT_EMBEDDING_DELETE] Failed:", e.message));
     }
@@ -145,7 +147,7 @@ router.delete("/products/:id", async (req, res) => {
   try {
     const adminId = getAdminId(req);
     await dbService.softDeleteProduct(adminId, req.params.id);
-    logAction(adminId, "soft-delete", "product", req.params.id, undefined, req.ip).catch(() => {});
+    logAction(adminId, "soft-delete", "product", req.params.id, undefined, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     res.json({ success: true, deletedAt: Date.now() });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -156,7 +158,7 @@ router.patch("/products/:id/restore", async (req, res) => {
   try {
     const adminId = getAdminId(req);
     await dbService.restoreProduct(adminId, req.params.id);
-    logAction(adminId, "restore", "product", req.params.id, undefined, req.ip).catch(() => {});
+    logAction(adminId, "restore", "product", req.params.id, undefined, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

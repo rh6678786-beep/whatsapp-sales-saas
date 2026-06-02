@@ -2,7 +2,9 @@ import { Router } from "express";
 import { dbService } from "../services/dbService.js";
 import { getAdminId } from "../middleware/auth.js";
 import { testTelegramConnection, setTelegramWebhook, deleteTelegramWebhook, handleTelegramIncoming } from "../services/telegramService.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:telegram");
 const router = Router();
 
 router.post("/telegram/test", async (req, res) => {
@@ -26,16 +28,16 @@ router.post("/telegram/config", async (req, res) => {
       const appUrl = process.env.APP_URL || "";
       if (appUrl) {
         const webhookUrl = `${appUrl.replace(/\/$/, "")}/api/webhook/telegram/${adminId}`;
-        console.log(`[TG CONFIG][${adminId}] Registering webhook: ${webhookUrl}`);
+        log.info({ adminId, webhookUrl }, "[TG CONFIG] Registering webhook");
         const success = await setTelegramWebhook(webhookUrl, adminId);
         if (!success) {
-          console.warn(`[TG CONFIG][${adminId}] Failed to set Telegram webhook.`);
+          log.warn({ adminId }, "Failed to set Telegram webhook.");
         }
       } else {
-        console.warn(`[TG CONFIG][${adminId}] APP_URL not defined in environment. Webhook not set.`);
+        log.warn({ adminId }, "APP_URL not defined. Webhook not set.");
       }
     } else {
-      console.log(`[TG CONFIG][${adminId}] Deleting Telegram webhook.`);
+      log.info({ adminId }, "Deleting Telegram webhook.");
       await deleteTelegramWebhook(adminId);
     }
 
@@ -48,18 +50,29 @@ router.post("/telegram/config", async (req, res) => {
 router.post("/webhook/telegram/:adminId", async (req, res) => {
   try {
     const { adminId } = req.params;
+
+    // Validate webhook secret if configured
+    const settings = await dbService.getSettings(adminId);
+    const telegramSecret = settings?.telegram?.webhookSecret;
+    const requestSecret = req.query.secret as string;
+
+    if (telegramSecret && requestSecret !== telegramSecret) {
+      log.warn({ adminId }, "Telegram webhook called with invalid secret");
+      return res.status(403).json({ ok: false, error: "invalid secret" });
+    }
+
     const { message } = req.body;
     if (message && message.chat && message.chat.id) {
       const chatId = message.chat.id;
       const text = message.text || "";
-      console.log(`[TG WEBHOOK][${adminId}] Received message from chat ${chatId}: "${text}"`);
+      log.info({ adminId, chatId, text: text.substring(0, 100) }, "[TG WEBHOOK] Received message");
       handleTelegramIncoming(chatId, text, adminId).catch(err => {
-        console.error(`[TG WEBHOOK PROCESS ERROR][${adminId}]`, err.message);
+        log.error({ err, adminId }, "[TG WEBHOOK] Processing error");
       });
     }
     res.json({ ok: true });
   } catch (error: any) {
-    console.error("[TG WEBHOOK ERROR]", error.message);
+    log.error({ err: error }, "[TG WEBHOOK] Error");
     res.status(500).json({ error: error.message });
   }
 });

@@ -1,5 +1,9 @@
-import { pool } from "../services/dbService.js";
-import { env } from "../config/env.js";
+import { dbService } from "./dbService.js";
+import { env } from "../lib/env.js";
+import { createChildLogger } from "../lib/logger.js";
+import { getRedis } from "../lib/redis.js";
+
+const log = createChildLogger("ai:cost-tracker");
 
 const MODEL_RATES: Record<string, { input: number; output: number }> = {
   "gemini-2.0-flash": { input: 0.10 / 1_000_000, output: 0.40 / 1_000_000 },
@@ -8,17 +12,40 @@ const MODEL_RATES: Record<string, { input: number; output: number }> = {
   "gemini-1.5-flash": { input: 0.075 / 1_000_000, output: 0.30 / 1_000_000 },
 };
 
-function startOfDay(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
+const REDIS_COST_KEY = (adminId: string, period: "daily" | "monthly") =>
+  `ai:cost:${adminId}:${period}`;
+const REDIS_COST_TTL = {
+  daily: 86400, // 24h
+  monthly: 86400 * 32, // ~32 days
+};
 
-function startOfMonth(): Date {
-  const d = new Date();
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d;
+async function getCacheOrCompute(
+  adminId: string,
+  period: "daily" | "monthly",
+  compute: () => Promise<number>,
+): Promise<number> {
+  try {
+    const redis = getRedis();
+    if (redis) {
+      const cached = await redis.get(REDIS_COST_KEY(adminId, period));
+      if (cached !== null) return parseFloat(cached);
+    }
+  } catch {}
+
+  const value = await compute();
+
+  try {
+    const redis = getRedis();
+    if (redis) {
+      await redis.setex(
+        REDIS_COST_KEY(adminId, period),
+        REDIS_COST_TTL[period],
+        value.toString(),
+      );
+    }
+  } catch {}
+
+  return value;
 }
 
 export async function trackAICall(
@@ -28,55 +55,32 @@ export async function trackAICall(
   outputTokens: number,
 ): Promise<void> {
   const rates = MODEL_RATES[model] || MODEL_RATES["gemini-2.0-flash"];
-  const cost = (inputTokens * rates.input) + (outputTokens * rates.output);
+  const cost = inputTokens * rates.input + outputTokens * rates.output;
 
   try {
-    await pool.query(
-      `INSERT INTO ai_cost_log (admin_id, model, input_tokens, output_tokens, cost)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [adminId, model, inputTokens, outputTokens, cost],
-    );
+    await dbService.logAiCost(adminId, model, inputTokens, outputTokens, cost);
   } catch (err: any) {
-    console.error(`[AI_COST] Failed to log cost for ${adminId}:`, err.message);
+    log.error({ err, adminId }, "Failed to log AI cost");
     return;
   }
 
   if (cost > 0.01) {
-    console.log(`[AI_COST][${adminId}] $${cost.toFixed(6)} (${model})`);
+    log.info({ adminId, cost: cost.toFixed(6), model }, "AI cost tracked");
   }
 }
 
 export async function getAdminDailyCost(adminId: string): Promise<number> {
-  try {
-    const result = await pool.query(
-      `SELECT COALESCE(SUM(cost), 0) AS total
-       FROM ai_cost_log
-       WHERE admin_id = $1 AND created_at >= $2`,
-      [adminId, startOfDay()],
-    );
-    return parseFloat(result.rows[0].total);
-  } catch {
-    return 0;
-  }
+  return getCacheOrCompute(adminId, "daily", () => dbService.getAdminDailyCost(adminId));
 }
 
 export async function getAdminMonthlyCost(adminId: string): Promise<number> {
-  try {
-    const result = await pool.query(
-      `SELECT COALESCE(SUM(cost), 0) AS total
-       FROM ai_cost_log
-       WHERE admin_id = $1 AND created_at >= $2`,
-      [adminId, startOfMonth()],
-    );
-    return parseFloat(result.rows[0].total);
-  } catch {
-    return 0;
-  }
+  return getCacheOrCompute(adminId, "monthly", () => dbService.getAdminMonthlyCost(adminId));
 }
 
 export async function isBudgetExceeded(adminId: string): Promise<boolean> {
   const monthly = await getAdminMonthlyCost(adminId);
-  return monthly >= env.AI_MONTHLY_BUDGET;
+  const budget = env.AI_MONTHLY_BUDGET;
+  return monthly >= budget;
 }
 
 export async function getAdminCostSummary(adminId: string): Promise<{
@@ -89,11 +93,12 @@ export async function getAdminCostSummary(adminId: string): Promise<{
     getAdminDailyCost(adminId),
     getAdminMonthlyCost(adminId),
   ]);
+  const budget = env.AI_MONTHLY_BUDGET;
   return {
     daily: Math.round(daily * 1000000) / 1000000,
     monthly: Math.round(monthly * 100) / 100,
-    budget: env.AI_MONTHLY_BUDGET,
-    exceeded: monthly >= env.AI_MONTHLY_BUDGET,
+    budget,
+    exceeded: monthly >= budget,
   };
 }
 

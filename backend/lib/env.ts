@@ -1,0 +1,110 @@
+import "dotenv/config";
+
+export interface EnvConfig {
+  NODE_ENV: "development" | "production" | "test";
+  PORT: number;
+  APP_URL: string;
+  JWT_SECRET: string;
+  ADMIN_PASSWORD: string;
+  DATABASE_URL: string;
+  DB_SSL_REJECT_UNAUTHORIZED: boolean;
+  REDIS_URL: string;
+  GEMINI_API_KEY: string;
+  AI_MONTHLY_BUDGET: number;
+  STRIPE_SECRET_KEY: string;
+  STRIPE_STARTER_PRICE_ID: string;
+  STRIPE_PROFESSIONAL_PRICE_ID: string;
+  STRIPE_ENTERPRISE_PRICE_ID: string;
+  STRIPE_WEBHOOK_SECRET: string;
+  SMTP_HOST: string;
+  SMTP_PORT: number;
+  SMTP_USER: string;
+  SMTP_PASS: string;
+  SMTP_FROM: string;
+  FACEBOOK_CLIENT_ID: string;
+  FACEBOOK_CLIENT_SECRET: string;
+  ENCRYPTION_KEY: string;
+}
+
+function requireEnv(key: string): string {
+  const value = process.env[key];
+  if (!value || value.trim() === "") {
+    throw new Error(
+      `[ENV] MISSING REQUIRED ENVIRONMENT VARIABLE: ${key}\n` +
+      `  The application cannot start without this variable.\n` +
+      `  Check .env or environment configuration.`
+    );
+  }
+  return value.trim();
+}
+
+function optionalEnv(key: string, defaultValue: string): string {
+  const value = process.env[key];
+  if (!value || value.trim() === "") return defaultValue;
+  return value.trim();
+}
+
+let _env: EnvConfig | null = null;
+
+export function loadEnv(): EnvConfig {
+  if (_env) return _env;
+
+  const NODE_ENV = optionalEnv("NODE_ENV", "development") as EnvConfig["NODE_ENV"];
+  const isProduction = NODE_ENV === "production";
+
+  const config: EnvConfig = {
+    NODE_ENV,
+    PORT: parseInt(optionalEnv("PORT", "3000"), 10),
+    APP_URL: isProduction ? requireEnv("APP_URL") : optionalEnv("APP_URL", "http://localhost:3000"),
+    JWT_SECRET: requireEnv("JWT_SECRET"),
+    ADMIN_PASSWORD: isProduction ? requireEnv("ADMIN_PASSWORD") : optionalEnv("ADMIN_PASSWORD", "admin"),
+    DATABASE_URL: requireEnv("DATABASE_URL"),
+    DB_SSL_REJECT_UNAUTHORIZED: optionalEnv("DB_SSL_REJECT_UNAUTHORIZED", "true") === "true",
+    REDIS_URL: optionalEnv("REDIS_URL", ""),
+    GEMINI_API_KEY: requireEnv("GEMINI_API_KEY"),
+    AI_MONTHLY_BUDGET: parseFloat(optionalEnv("AI_MONTHLY_BUDGET", "100")),
+    STRIPE_SECRET_KEY: optionalEnv("STRIPE_SECRET_KEY", ""),
+    STRIPE_STARTER_PRICE_ID: optionalEnv("STRIPE_STARTER_PRICE_ID", ""),
+    STRIPE_PROFESSIONAL_PRICE_ID: optionalEnv("STRIPE_PROFESSIONAL_PRICE_ID", ""),
+    STRIPE_ENTERPRISE_PRICE_ID: optionalEnv("STRIPE_ENTERPRISE_PRICE_ID", ""),
+    STRIPE_WEBHOOK_SECRET: optionalEnv("STRIPE_WEBHOOK_SECRET", ""),
+    SMTP_HOST: optionalEnv("SMTP_HOST", ""),
+    SMTP_PORT: parseInt(optionalEnv("SMTP_PORT", "587"), 10),
+    SMTP_USER: optionalEnv("SMTP_USER", ""),
+    SMTP_PASS: optionalEnv("SMTP_PASS", ""),
+    SMTP_FROM: optionalEnv("SMTP_FROM", "noreply@saascloser.ai"),
+    FACEBOOK_CLIENT_ID: optionalEnv("FACEBOOK_CLIENT_ID", ""),
+    FACEBOOK_CLIENT_SECRET: optionalEnv("FACEBOOK_CLIENT_SECRET", ""),
+    ENCRYPTION_KEY: requireEnv("ENCRYPTION_KEY"),
+  };
+
+  // Validate NODE_TLS_REJECT_UNAUTHORIZED is not 0 in production
+  if (isProduction && process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") {
+    console.error(
+      "[ENV] CRITICAL: NODE_TLS_REJECT_UNAUTHORIZED is set to 0.\n" +
+      "  This disables ALL TLS certificate validation for ALL outbound connections.\n" +
+      "  This is INSECURE and must NOT be used in production."
+    );
+    throw new Error("NODE_TLS_REJECT_UNAUTHORIZED=0 is not allowed in production");
+  }
+
+  // Warn about default admin password in production
+  if (isProduction && config.ADMIN_PASSWORD === "admin") {
+    throw new Error("ADMIN_PASSWORD is still set to default 'admin' in production. Change it immediately.");
+  }
+
+  // Validate JWT_SECRET strength
+  if (isProduction && config.JWT_SECRET.length < 32) {
+    throw new Error("JWT_SECRET must be at least 32 characters in production. Generate with: openssl rand -hex 64");
+  }
+
+  // Validate encryption key
+  if (isProduction && config.ENCRYPTION_KEY.length < 32) {
+    throw new Error("ENCRYPTION_KEY must be at least 32 characters in production. Generate with: openssl rand -hex 32");
+  }
+
+  _env = config;
+  return config;
+}
+
+export const env = loadEnv();

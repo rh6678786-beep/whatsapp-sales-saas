@@ -6,17 +6,31 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  NODE_VERSION: 20
+
 jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - run: npm run lint
+      - run: npx tsc --noEmit
 
   test:
     runs-on: ubuntu-latest
@@ -36,7 +50,8 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
-      JWT_SECRET: test-secret
+      JWT_SECRET: test-secret-for-ci-only
+      ENCRYPTION_KEY: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       ADMIN_PASSWORD: test-admin
       GEMINI_API_KEY: test-key
       NODE_ENV: test
@@ -44,21 +59,40 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npx prisma generate
       - run: npx prisma db push --accept-data-loss
       - run: npm test
 
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy vulnerability scanner (fs)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [typecheck, lint, test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
       - run: npm run build

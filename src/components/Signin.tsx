@@ -48,9 +48,9 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
         password,
       });
       if (res.data?.token) {
-        localStorage.setItem('isAdmin', 'true');
-        localStorage.setItem('adminId', res.data.adminId || storeId || 'default-admin');
-        localStorage.setItem('authToken', res.data.token);
+        sessionStorage.setItem('isAdmin', 'true');
+        sessionStorage.setItem('adminId', res.data.adminId || storeId || 'default-admin');
+        sessionStorage.setItem('authToken', res.data.token);
         onSignin();
       } else {
         setError('Invalid credentials. Please try again.');

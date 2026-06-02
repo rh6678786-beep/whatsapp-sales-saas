@@ -1,9 +1,11 @@
 import { Router } from "express";
 import { dbService } from "../services/dbService.js";
 import { getAdminId } from "../middleware/auth.js";
-import { Order } from "../../src/types.js";
 import { logAction } from "../services/auditLogService.js";
+import { createChildLogger } from "../lib/logger.js";
+import { Order } from "../../src/types";
 
+const log = createChildLogger("route:sessions");
 const router = Router();
 
 router.get("/sessions", async (req, res) => {
@@ -49,7 +51,7 @@ router.patch("/sessions/:id", async (req, res) => {
     await dbService.updateSession(adminId, sessionId, req.body);
 
     if (req.body.isBlocked !== undefined) {
-      logAction(adminId, req.body.isBlocked ? "block" : "unblock", "session", sessionId, undefined, req.ip).catch(() => {});
+      logAction(adminId, req.body.isBlocked ? "block" : "unblock", "session", sessionId, undefined, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     }
 
     if (req.body.state === "ORDER_CONFIRMED" || req.body.state === "DELIVERED") {

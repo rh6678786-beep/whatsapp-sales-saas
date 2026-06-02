@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     include: ["backend/__tests__/**/*.test.ts"],
     environment: "node",
-    setupFiles: [],
+    setupFiles: ["backend/__tests__/vitest.setup.ts"],
     testTimeout: 10000,
   },
 });

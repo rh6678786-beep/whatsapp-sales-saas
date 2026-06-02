@@ -45,10 +45,10 @@ export default function TeamLogin({ onLogin, onBackToAdmin }: TeamLoginProps) {
     try {
       const res = await axios.post('/api/team/login', { email, password });
       if (res.data?.token) {
-        localStorage.setItem('isAdmin', 'true');
-        localStorage.setItem('adminId', res.data.adminId);
-        localStorage.setItem('authToken', res.data.token);
-        localStorage.setItem('teamMember', JSON.stringify(res.data.member));
+        sessionStorage.setItem('isAdmin', 'true');
+        sessionStorage.setItem('adminId', res.data.adminId);
+        sessionStorage.setItem('authToken', res.data.token);
+        sessionStorage.setItem('teamMember', JSON.stringify(res.data.member));
         onLogin();
       } else {
         setError('Invalid credentials. Please try again.');

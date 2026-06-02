@@ -1,4 +1,4 @@
-import { prisma } from '../../prisma/client';
+import { prisma } from '../services/dbService.js';
 
 /**
  * Log a failed AI request to the Dead Letter Queue.

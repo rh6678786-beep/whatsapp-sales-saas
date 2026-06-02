@@ -28,8 +28,8 @@ export async function processAbandonedCarts(
 
   for (const session of eligible) {
     try {
-      const productName = session.selectedProductId
-        ? (await dbService.getAllProducts(adminId)).find(p => p.id === session.selectedProductId)?.name
+      const productName: string | null = session.selectedProductId
+        ? (await dbService.getAllProducts(adminId)).find(p => p.id === session.selectedProductId)?.name ?? null
         : null;
 
       let message = generateAbandonedCartFallback(session, productName, settings.storeName);

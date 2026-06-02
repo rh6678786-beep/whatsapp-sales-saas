@@ -1,5 +1,7 @@
 import Stripe from "stripe";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("stripe:service");
 const isMockMode = !process.env.STRIPE_SECRET_KEY;
 const stripe = isMockMode ? null : new Stripe(process.env.STRIPE_SECRET_KEY!);
 
@@ -248,7 +250,8 @@ export async function handleWebhook(
   let event: Stripe.Event;
   try {
     event = stripe!.webhooks.constructEvent(body, signature, webhookSecret);
-  } catch {
+  } catch (err) {
+    log.warn({ err }, "Stripe webhook signature verification failed");
     return null;
   }
 

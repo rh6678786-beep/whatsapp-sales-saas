@@ -1,9 +1,12 @@
 import { Queue, Worker, Job } from "bullmq";
-import { env } from "../config/env.js";
-import { getRedis } from "../config/redis.js";
+import { env } from "../lib/env.js";
+import { getRedis } from "../lib/redis.js";
 import { dbService } from "../services/dbService.js";
 import { generateSalesResponse } from "../services/aiService.js";
 import { sendWhatsAppMessage } from "../lib/whatsappClient.js";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("queue:ai-retry");
 
 interface RetryJobData {
   adminId: string;
@@ -17,17 +20,17 @@ const MAX_RETRIES = 3;
 let queue: Queue<RetryJobData> | null = null;
 let worker: Worker<RetryJobData> | null = null;
 
-// In-memory fallback
-const memQueue: Map<string, { data: RetryJobData; attempt: number; timer: NodeJS.Timeout }> = new Map();
-
-let memWorkerTimer: NodeJS.Timeout | null = null;
+const memQueue: Map<
+  string,
+  { data: RetryJobData; attempt: number; timer: NodeJS.Timeout }
+> = new Map();
 
 async function processRetry(data: RetryJobData): Promise<void> {
   const { adminId, userId, message } = data;
 
   const session = await dbService.getSession(adminId, userId);
   if (!session) {
-    console.log(`[AI RETRY][${adminId}] Session for ${userId} not found, dropping`);
+    log.warn({ adminId, userId }, "Session not found, dropping");
     return;
   }
 
@@ -42,7 +45,7 @@ async function processRetry(data: RetryJobData): Promise<void> {
     undefined,
     undefined,
     "Customer",
-    undefined
+    undefined,
   );
 
   if (responseText) {
@@ -50,38 +53,50 @@ async function processRetry(data: RetryJobData): Promise<void> {
     const now = Date.now();
     const modelMsg = {
       sessionId: userId,
-      role: 'model' as const,
+      role: "model" as const,
       text: cleanResponse,
       timestamp: new Date(now).toISOString(),
     };
     await dbService.addMessage(adminId, userId, modelMsg);
     await sendWhatsAppMessage(adminId, userId, cleanResponse);
-    console.log(`[AI RETRY][${adminId}] Sent queued reply to ${userId}`);
+    log.info({ adminId, userId }, "Sent queued reply");
   } else {
     throw new Error("generateSalesResponse returned empty");
   }
 }
 
-export function addToRetryQueue(adminId: string, userId: string, message: string): void {
+export function addToRetryQueue(
+  adminId: string,
+  userId: string,
+  message: string,
+): void {
   const data: RetryJobData = { adminId, userId, message };
 
   if (queue) {
-    queue.add("retry", data, {
-      attempts: MAX_RETRIES,
-      backoff: { type: "fixed", delay: 1000 },
-    }).catch(err => console.error("[AI RETRY] Failed to add BullMQ job:", err.message));
+    queue
+      .add("retry", data, {
+        attempts: MAX_RETRIES,
+        backoff: { type: "fixed", delay: 1000 },
+      })
+      .catch((err) =>
+        log.error({ err }, "Failed to add BullMQ job"),
+      );
   } else {
     const key = `${adminId}:${userId}`;
     if (memQueue.has(key)) return;
 
-    console.log(`[AI RETRY][MEM] Queued message from ${userId}`);
+    log.info({ adminId, userId }, "[MEM] Queued message");
     scheduleMemRetry(key, data, 0);
   }
 }
 
-function scheduleMemRetry(key: string, data: RetryJobData, attempt: number): void {
+function scheduleMemRetry(
+  key: string,
+  data: RetryJobData,
+  attempt: number,
+): void {
   if (attempt >= MAX_RETRIES) {
-    console.warn(`[AI RETRY][MEM] Max retries reached for ${key}, dropping`);
+    log.warn({ key }, "[MEM] Max retries reached, dropping");
     memQueue.delete(key);
     return;
   }
@@ -92,7 +107,10 @@ function scheduleMemRetry(key: string, data: RetryJobData, attempt: number): voi
       await processRetry(data);
       memQueue.delete(key);
     } catch (err: any) {
-      console.error(`[AI RETRY][MEM] Attempt ${attempt + 1}/${MAX_RETRIES} failed for ${key}: ${err.message}`);
+      log.error(
+        { err, key, attempt: attempt + 1, max: MAX_RETRIES },
+        "[MEM] Retry failed",
+      );
       scheduleMemRetry(key, data, attempt + 1);
     }
   }, delay);
@@ -103,13 +121,17 @@ function scheduleMemRetry(key: string, data: RetryJobData, attempt: number): voi
 export function startRetryWorker(): void {
   const redis = getRedis();
   if (!redis) {
-    console.log("[AI RETRY] No Redis — using in-memory retry");
+    log.info("No Redis — using in-memory retry");
     return;
   }
 
   const connection = {
-    host: env.REDIS_URL ? new URL(env.REDIS_URL).hostname : "localhost",
-    port: env.REDIS_URL ? parseInt(new URL(env.REDIS_URL).port || "6379") : 6379,
+    host: env.REDIS_URL
+      ? new URL(env.REDIS_URL).hostname
+      : "localhost",
+    port: env.REDIS_URL
+      ? parseInt(new URL(env.REDIS_URL).port || "6379", 10)
+      : 6379,
   };
 
   queue = new Queue<RetryJobData>("ai-retry", {
@@ -122,19 +144,29 @@ export function startRetryWorker(): void {
     },
   });
 
-  worker = new Worker<RetryJobData>("ai-retry", async (job: Job<RetryJobData>) => {
-    const { adminId, userId } = job.data;
-    console.log(`[AI RETRY] Processing job ${job.id} for ${adminId}:${userId} (attempt ${job.attemptsMade + 1})`);
-    await processRetry(job.data);
-  }, { connection });
+  worker = new Worker<RetryJobData>(
+    "ai-retry",
+    async (job: Job<RetryJobData>) => {
+      const { adminId, userId } = job.data;
+      log.info(
+        { jobId: job.id, adminId, userId, attempt: job.attemptsMade + 1 },
+        "Processing retry job",
+      );
+      await processRetry(job.data);
+    },
+    { connection },
+  );
 
   worker.on("failed", (job: Job<RetryJobData> | undefined, err: Error) => {
     if (job) {
-      console.error(`[AI RETRY] Job ${job.id} failed after ${job.attemptsMade} attempts: ${err.message}`);
+      log.error(
+        { jobId: job.id, adminId: job.data.adminId, attempts: job.attemptsMade },
+        `Job failed: ${err.message}`,
+      );
     }
   });
 
-  console.log("[AI RETRY] BullMQ worker started");
+  log.info("BullMQ retry worker started");
 }
 
 export function stopRetryWorker(): void {
@@ -142,16 +174,10 @@ export function stopRetryWorker(): void {
     worker.close();
     worker = null;
   }
-  if (queue) {
-    queue = null;
-  }
-  for (const [key, entry] of memQueue) {
+  queue = null;
+  for (const [, entry] of memQueue) {
     clearTimeout(entry.timer);
   }
   memQueue.clear();
-  if (memWorkerTimer) {
-    clearInterval(memWorkerTimer);
-    memWorkerTimer = null;
-  }
-  console.log("[AI RETRY] Worker stopped");
+  log.info("Retry worker stopped");
 }

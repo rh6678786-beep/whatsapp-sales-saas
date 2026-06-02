@@ -6,48 +6,54 @@ import { fileURLToPath } from "url";
 import cron from "node-cron";
 import { createServer } from "http";
 
-import { dbService } from "./backend/services/dbService.js";
-import { env } from "./backend/config/env.js";
-import { connectRedis } from "./backend/config/redis.js";
-import { setupWebSocket, emitToAdmin } from "./backend/config/websocket.js";
+import { env } from "./backend/lib/env.js";
+import { connectRedis, disconnectRedis } from "./backend/lib/redis.js";
+import { logger, createChildLogger } from "./backend/lib/logger.js";
+import { defaultRateLimiter, webhookRateLimiter } from "./backend/lib/rateLimiter.js";
+import { setupWebSocket } from "./backend/config/websocket.js";
 import { setupQueues, isQueuesEnabled, startAiRetryProcessor } from "./backend/queues/index.js";
-import helmet from "helmet";
-import compression from "compression";
-import cors from "cors";
+import { setupDatabase } from "./backend/lib/database.js";
 import { errorHandler } from "./backend/middleware/errorHandler.js";
-import { rateLimitDefault } from "./backend/middleware/rateLimit.js";
 import { requestLogger } from "./backend/middleware/requestLogger.js";
 import { correlationId } from "./backend/middleware/correlationId.js";
 import { processAllAdmins } from "./backend/services/proactiveEngine.js";
+import helmet from "helmet";
+import compression from "compression";
+import cors from "cors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const log = createChildLogger("server");
 
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
 
-  // Raw body capture for Stripe webhook (must be BEFORE express.json)
-  app.use((req: any, _res, next) => {
-    if (req.originalUrl === "/api/billing/webhook") {
-      let data = "";
-      req.on("data", (chunk: string) => { data += chunk; });
-      req.on("end", () => { req.rawBody = data; });
-    }
-    next();
-  });
+  // ===========================================================================
+  // STANDARD MIDDLEWARE
+  // ===========================================================================
+  // Raw body is captured via express.json verify callback for Stripe webhook
+  app.use(express.json({
+    limit: "10mb",
+    verify: (req: any, _res, buf: Buffer) => {
+      if (req.originalUrl === "/api/billing/webhook") {
+        req.rawBody = buf;
+      }
+    },
+  }));
 
-  app.use(express.json({ limit: "50mb" }));
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
-
   app.use(compression());
+
+  // Helmet with strict CSP
   app.use(helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "blob:"],
+        imgSrc: ["'self'", "data:", "blob:", "https:"],
         connectSrc: ["'self'", "ws:", "wss:"],
         fontSrc: ["'self'"],
         frameAncestors: ["'none'"],
@@ -55,58 +61,63 @@ async function startServer() {
         formAction: ["'self'"],
       },
     },
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
   }));
+
+  // CORS — strict in production
   app.use(cors({
-    origin: env.NODE_ENV === "production" ? false : "*",
+    origin: env.NODE_ENV === "production"
+      ? env.APP_URL
+        ? [env.APP_URL]
+        : false
+      : "*",
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-correlation-id"],
+    exposedHeaders: ["x-correlation-id"],
   }));
+
+  // Observability middleware
   app.use(correlationId);
   app.use(requestLogger);
-  app.use(rateLimitDefault);
 
+  // Rate limiting — skip for webhook and health endpoints
+  app.use((req, res, next) => {
+    if (req.path === "/api/billing/webhook" || req.path === "/api/health") {
+      next();
+    } else {
+      defaultRateLimiter(req, res, next);
+    }
+  });
+
+  // ===========================================================================
+  // WEBSOCKET
+  // ===========================================================================
   const ws = setupWebSocket(httpServer);
   (global as any).__io = ws;
 
+  // ===========================================================================
+  // REDIS + QUEUES
+  // ===========================================================================
   await connectRedis();
   await setupQueues();
 
-  // Database setup & schema sync
-  {
-    const { default: pg } = await import("pg");
-    const pool = new pg.Pool({
-      connectionString: env.DATABASE_URL?.replace(/[?&]sslmode=[^&]*/g, "").replace(/[?&]$/, ""),
-      ssl: { rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED },
-    });
-    const client = await pool.connect();
-    const res = await client.query("SELECT 1 as ok");
-    console.log(`[DB] Connected to PostgreSQL`);
-
-    let tablesExist = false;
-    try {
-      const tableCheck = await client.query("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'Admin')");
-      tablesExist = tableCheck.rows[0].exists;
-    } catch (_) {}
-
-    client.release();
-    await pool.end();
-
-    try {
-      const { execSync } = await import("child_process");
-      execSync("npx prisma db push --accept-data-loss", { stdio: "inherit", cwd: __dirname });
-      console.log("[DB] Schema synced with database");
-    } catch (schemaErr: any) {
-      console.warn("[DB] Schema push skipped:", schemaErr.message?.slice(0, 100));
-    }
-
-    try {
-      const { seedDatabase } = await import("./backend/lib/seed.js");
-      await seedDatabase();
-    } catch (seedErr: any) {
-      console.warn("[DB] Seed warning:", (seedErr as Error).message);
-    }
+  // ===========================================================================
+  // DATABASE SETUP
+  // ===========================================================================
+  try {
+    await setupDatabase();
+  } catch (err) {
+    log.error({ err }, "Database setup failed — server will start but some features may not work");
   }
 
-  // Routes
+  // ===========================================================================
+  // ROUTES
+  // ===========================================================================
   const { default: authRoutes } = await import("./backend/routes/auth.js");
   const { default: igOauthRoutes } = await import("./backend/routes/igOauth.js");
   const { default: whatsappRoutes } = await import("./backend/routes/whatsapp.js");
@@ -171,7 +182,9 @@ async function startServer() {
   app.use("/api", twoFactorRoutes);
   app.use("/api", statsRoutes);
 
-  // Vite / SPA
+  // ===========================================================================
+  // VITE / SPA
+  // ===========================================================================
   if (env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -185,42 +198,69 @@ async function startServer() {
     });
   }
 
+  // ===========================================================================
+  // ERROR HANDLER (must be last)
+  // ===========================================================================
   app.use(errorHandler);
 
-  // Process-level handlers
-  process.on("unhandledRejection", (reason) => {
-    console.error("[FATAL] Unhandled Rejection:", reason);
-  });
-  process.on("uncaughtException", (err) => {
-    console.error("[FATAL] Uncaught Exception:", err);
-  });
-  process.removeAllListeners("SIGTERM");
-  process.removeAllListeners("SIGINT");
-  process.on("SIGTERM", () => { console.log("[SERVER] SIGTERM received, ignoring"); });
-  process.on("SIGINT", () => { console.log("[SERVER] SIGINT received, ignoring"); });
-  process.on("exit", (code) => {
-    console.log(`[SERVER] Process exiting with code ${code}`);
-    console.log(new Error("Stack trace").stack);
-  });
-
-  const PORT = env.PORT;
-  httpServer.listen(PORT, () => {
-    console.log(`🚀 Multi-Tenant SaaS Server running on http://localhost:${PORT}`);
-
+  // ===========================================================================
+  // BACKGROUND JOBS
+  // ===========================================================================
+  if (env.NODE_ENV !== "test" && !process.env.VITEST) {
     if (!isQueuesEnabled()) {
       startAiRetryProcessor();
 
       cron.schedule("*/15 * * * *", () => {
-        processAllAdmins().catch(e => console.error("[CRON] processAllAdmins error:", e.message));
+        processAllAdmins().catch((e) =>
+          log.error({ err: e }, "processAllAdmins cron error")
+        );
       });
-      console.log("[CRON] Proactive engine scheduled every 15 minutes");
+      log.info("Proactive engine scheduled every 15 minutes");
     }
+  }
+
+  // ===========================================================================
+  // START
+  // ===========================================================================
+  const PORT = env.PORT;
+  httpServer.listen(PORT, () => {
+    log.info({ port: PORT, nodeEnv: env.NODE_ENV }, `Server started on port ${PORT}`);
   });
 
-  setInterval(() => {}, 60000);
+  // ===========================================================================
+  // GRACEFUL SHUTDOWN
+  // ===========================================================================
+  let isShuttingDown = false;
+
+  async function gracefulShutdown(signal: string) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    log.info({ signal }, "Graceful shutdown initiated");
+
+    // Stop accepting new connections
+    httpServer.close(async () => {
+      log.info("HTTP server closed");
+
+      // Disconnect Redis
+      await disconnectRedis();
+
+      log.info("Shutdown complete");
+      process.exit(0);
+    });
+
+    // Force exit after 10 seconds
+    setTimeout(() => {
+      log.error("Forced shutdown after timeout");
+      process.exit(1);
+    }, 10000);
+  }
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }
 
 startServer().catch((err) => {
-  console.error("[FATAL] Server failed to start:", err);
+  log.error({ err }, "Server failed to start");
   process.exit(1);
 });

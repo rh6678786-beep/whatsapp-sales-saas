@@ -1,13 +1,18 @@
 import { Request, Response, NextFunction } from "express";
-import { randomUUID } from "crypto";
+import crypto from "crypto";
 
-export function correlationId(req: Request, _res: Response, next: NextFunction): void {
-  const id = (req.headers["x-correlation-id"] as string) || randomUUID();
+// Regex to validate correlation ID format (alphanumeric + hyphens/underscores/dots, max 64 chars)
+const VALID_CORRELATION_ID = /^[a-zA-Z0-9\-_.]{1,64}$/;
+
+export function correlationId(req: Request, res: Response, next: NextFunction): void {
+  // Only accept valid correlation IDs from upstream; reject malicious ones
+  const incomingId = req.headers["x-correlation-id"] as string | undefined;
+  const isValidIncoming = incomingId && VALID_CORRELATION_ID.test(incomingId);
+
+  const id = isValidIncoming ? incomingId! : crypto.randomUUID();
+
   req.headers["x-correlation-id"] = id;
-  (req as any).correlationId = id;
-  next();
-}
+  res.setHeader("x-correlation-id", id);
 
-export function getCorrelationId(req: Request): string {
-  return (req as any).correlationId || (req.headers["x-correlation-id"] as string) || "unknown";
+  next();
 }

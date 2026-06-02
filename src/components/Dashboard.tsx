@@ -256,7 +256,7 @@ export default function Dashboard() {
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e4e4e7" opacity={0.2} />
                 <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#71717a' }} />
                 <YAxis type="category" dataKey="state" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#71717a' }} width={120} tickFormatter={(v) => v.replace(/_/g, ' ')} />
-                <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} formatter={(value: number) => [value, 'Customers']} />
+                <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} formatter={(value: any) => [value, 'Customers']} />
                 <Bar dataKey="count" radius={[0, 8, 8, 0]} maxBarSize={24}>
                   {funnel.funnel.map((entry, idx) => (
                     <Cell key={idx} fill={STATE_COLORS[entry.state] || '#a1a1aa'} />

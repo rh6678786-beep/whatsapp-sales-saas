@@ -5,6 +5,6 @@ export const signupSchema = z.object({
   storeName: z.string().min(1).max(100).optional(),
 });
 export const loginSchema = z.object({
-  email: z.string().email(),
+  adminId: z.string().min(1),
   password: z.string().min(1),
 });

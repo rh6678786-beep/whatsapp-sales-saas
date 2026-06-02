@@ -1,7 +1,10 @@
-import { createHash } from 'crypto';
+import { createHash } from "crypto";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("circuit-breaker");
 
 export interface CircuitBreakerState {
-  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  state: "CLOSED" | "OPEN" | "HALF_OPEN";
   failureCount: number;
   successCount: number;
   lastFailureTime: number;
@@ -11,11 +14,11 @@ export interface CircuitBreakerState {
 }
 
 export interface CircuitBreakerConfig {
-  failureThreshold: number; // Number of failures before opening circuit
-  resetTimeout: number; // Time to wait before attempting reset (ms)
-  monitoringPeriod: number; // Time window for monitoring (ms)
+  failureThreshold: number;
+  resetTimeout: number;
+  monitoringPeriod: number;
   expectedExceptionPredicate?: (error: any) => boolean;
-  timeout: number; // Request timeout (ms)
+  timeout: number;
   fallbackResponse?: string;
 }
 
@@ -23,28 +26,29 @@ export class CircuitBreaker {
   private state: Map<string, CircuitBreakerState> = new Map();
   private config: CircuitBreakerConfig;
   private monitoringIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private destroyed = false;
 
-  constructor(config: CircuitBreakerConfig) {
+  constructor(config: Partial<CircuitBreakerConfig>) {
     this.config = {
       failureThreshold: 5,
-      resetTimeout: 60000, // 1 minute
-      monitoringPeriod: 300000, // 5 minutes
-      timeout: 30000, // 30 seconds
+      resetTimeout: 60000,
+      monitoringPeriod: 300000,
+      timeout: 30000,
       ...config,
     };
   }
 
   private getKey(adminId: string, operation: string): string {
-    return createHash('md5').update(`${adminId}:${operation}`).digest('hex');
+    return createHash("md5").update(`${adminId}:${operation}`).digest("hex");
   }
 
   private getState(adminId: string, operation: string): CircuitBreakerState {
     const key = this.getKey(adminId, operation);
     let state = this.state.get(key);
-    
+
     if (!state) {
       state = {
-        state: 'CLOSED',
+        state: "CLOSED",
         failureCount: 0,
         successCount: 0,
         lastFailureTime: 0,
@@ -55,7 +59,6 @@ export class CircuitBreaker {
       this.state.set(key, state);
     }
 
-    // Clean up old states
     if (Date.now() - state.lastFailureTime > this.config.monitoringPeriod) {
       this.resetState(key, state);
     }
@@ -64,7 +67,7 @@ export class CircuitBreaker {
   }
 
   private resetState(key: string, state: CircuitBreakerState): void {
-    state.state = 'CLOSED';
+    state.state = "CLOSED";
     state.failureCount = 0;
     state.successCount = 0;
     state.consecutiveFailures = 0;
@@ -77,27 +80,23 @@ export class CircuitBreaker {
     const state = this.getState(adminId, operation);
     const now = Date.now();
 
-    if (state.state === 'CLOSED') {
-      return true;
-    }
+    if (state.state === "CLOSED") return true;
 
-    if (state.state === 'OPEN') {
+    if (state.state === "OPEN") {
       if (now >= state.nextAttemptTime) {
-        state.state = 'HALF_OPEN';
+        state.state = "HALF_OPEN";
         state.consecutiveSuccesses = 0;
         return true;
       }
       return false;
     }
 
-    // HALF_OPEN state
     return true;
   }
 
   private recordSuccess(adminId: string, operation: string): void {
     const key = this.getKey(adminId, operation);
     const state = this.state.get(key);
-    
     if (!state) return;
 
     state.successCount++;
@@ -105,19 +104,16 @@ export class CircuitBreaker {
     state.consecutiveFailures = 0;
     state.lastFailureTime = 0;
 
-    if (state.state === 'HALF_OPEN') {
-      if (state.consecutiveSuccesses >= 3) {
-        state.state = 'CLOSED';
-        state.consecutiveSuccesses = 0;
-        console.log(`[CIRCUIT_BREAKER][${adminId}] Circuit closed after successful recovery`);
-      }
+    if (state.state === "HALF_OPEN" && state.consecutiveSuccesses >= 3) {
+      state.state = "CLOSED";
+      state.consecutiveSuccesses = 0;
+      log.info({ adminId, operation }, "Circuit closed after successful recovery");
     }
   }
 
   private recordFailure(adminId: string, operation: string, error: any): void {
     const key = this.getKey(adminId, operation);
     const state = this.state.get(key);
-    
     if (!state) return;
 
     state.failureCount++;
@@ -125,75 +121,77 @@ export class CircuitBreaker {
     state.consecutiveSuccesses = 0;
     state.lastFailureTime = Date.now();
 
-    if (state.state === 'HALF_OPEN') {
+    if (state.state === "HALF_OPEN") {
       this.openCircuit(key, state);
-    } else if (state.state === 'CLOSED') {
-      if (state.consecutiveFailures >= this.config.failureThreshold) {
-        this.openCircuit(key, state);
-      }
+    } else if (state.state === "CLOSED" && state.consecutiveFailures >= this.config.failureThreshold) {
+      this.openCircuit(key, state);
     }
 
-    console.log(`[CIRCUIT_BREAKER][${adminId}] Failure recorded. State: ${state.state}, Consecutive failures: ${state.consecutiveFailures}`);
+    log.info({ adminId, operation, state: state.state, failures: state.consecutiveFailures }, "Failure recorded");
   }
 
   private openCircuit(key: string, state: CircuitBreakerState): void {
-    state.state = 'OPEN';
+    state.state = "OPEN";
     state.nextAttemptTime = Date.now() + this.config.resetTimeout;
     state.consecutiveFailures = 0;
-    
-    console.log(`[CIRCUIT_BREAKER] Circuit opened for ${key}. Reset in ${this.config.resetTimeout}ms`);
-    
-    // Set up automatic monitoring
+
+    log.info({ key, resetMs: this.config.resetTimeout }, "Circuit opened");
     this.setupMonitoring(key);
   }
 
   private setupMonitoring(key: string): void {
-    // Clear existing monitoring
-    if (this.monitoringIntervals.has(key)) {
-      clearInterval(this.monitoringIntervals.get(key));
-    }
+    if (this.destroyed) return;
+    this.clearMonitoring(key);
 
-    // Set up new monitoring interval
     const interval = setInterval(() => {
-      const state = this.state.get(key);
-      if (state && state.state === 'OPEN') {
-        if (Date.now() >= state.nextAttemptTime) {
-          console.log(`[CIRCUIT_BREAKER][${key}] Monitoring: Circuit ready for half-open state`);
-        }
+      if (this.destroyed) {
+        clearInterval(interval);
+        return;
       }
-    }, 10000); // Check every 10 seconds
+      const state = this.state.get(key);
+      if (state && state.state === "OPEN" && Date.now() >= state.nextAttemptTime) {
+        log.info({ key }, "Monitoring: Circuit ready for half-open state");
+      }
+    }, 10000);
 
     this.monitoringIntervals.set(key, interval);
+  }
+
+  private clearMonitoring(key: string): void {
+    const existing = this.monitoringIntervals.get(key);
+    if (existing) {
+      clearInterval(existing);
+      this.monitoringIntervals.delete(key);
+    }
   }
 
   async execute<T>(
     adminId: string,
     operation: string,
     operationFn: () => Promise<T>,
-    fallbackFn?: () => Promise<T>
+    fallbackFn?: () => Promise<T>,
   ): Promise<T> {
+    if (this.destroyed) {
+      throw new Error("Circuit breaker has been destroyed");
+    }
+
     const key = this.getKey(adminId, operation);
     const state = this.getState(adminId, operation);
 
-    // Check if circuit is open
     if (!this.shouldAllowRequest(adminId, operation)) {
-      console.log(`[CIRCUIT_BREAKER][${adminId}] Circuit OPEN for ${operation}. Using fallback.`);
-      
-      if (this.config.fallbackResponse && operationFn.constructor.name === 'AsyncFunction') {
-        // For AI operations, return fallback response
-        const fallback = this.config.fallbackResponse;
-        return Promise.resolve(fallback as T);
+      log.info({ adminId, operation }, "Circuit OPEN — using fallback");
+
+      if (this.config.fallbackResponse) {
+        return this.config.fallbackResponse as T;
       }
-      
       if (fallbackFn) {
         return fallbackFn();
       }
-      
       throw new Error(`Circuit breaker is OPEN for ${operation}. Try again later.`);
     }
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Request timeout')), this.config.timeout);
+      setTimeout(() => reject(new Error("Request timeout")), this.config.timeout);
     });
 
     try {
@@ -201,24 +199,18 @@ export class CircuitBreaker {
       this.recordSuccess(adminId, operation);
       return result;
     } catch (error: any) {
-      // Check if error is expected and should be ignored
       if (this.config.expectedExceptionPredicate?.(error)) {
         this.recordSuccess(adminId, operation);
         throw error;
       }
-
       this.recordFailure(adminId, operation, error);
-      
-      if (this.config.fallbackResponse && operationFn.constructor.name === 'AsyncFunction') {
-        // For AI operations, return fallback response
-        const fallback = this.config.fallbackResponse;
-        return Promise.resolve(fallback as T);
+
+      if (this.config.fallbackResponse) {
+        return this.config.fallbackResponse as T;
       }
-      
       if (fallbackFn) {
         return fallbackFn();
       }
-      
       throw error;
     }
   }
@@ -234,33 +226,31 @@ export class CircuitBreaker {
 
   resetAll(): void {
     this.state.clear();
-    this.monitoringIntervals.forEach(interval => clearInterval(interval));
+    this.monitoringIntervals.forEach((interval) => clearInterval(interval));
     this.monitoringIntervals.clear();
-    console.log('[CIRCUIT_BREAKER] All circuit breakers reset');
+    log.info("All circuit breakers reset");
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.resetAll();
-    this.monitoringIntervals.forEach(interval => clearInterval(interval));
-    this.monitoringIntervals.clear();
   }
 }
 
-// Global circuit breaker instance
 export const aiCircuitBreaker = new CircuitBreaker({
   failureThreshold: 5,
-  resetTimeout: 60000, // 1 minute
-  monitoringPeriod: 300000, // 5 minutes
-  timeout: 30000, // 30 seconds
-  fallbackResponse: "Hello! I'm experiencing some technical difficulties right now. Please try again in a few minutes, or contact our support team if the issue persists. Thank you for your patience! 😊",
+  resetTimeout: 60000,
+  monitoringPeriod: 300000,
+  timeout: 30000,
+  fallbackResponse:
+    "Hello! I'm experiencing some technical difficulties right now. Please try again in a few minutes, or contact our support team if the issue persists. Thank you for your patience!",
 });
 
-// Helper function for AI operations
 export async function executeWithCircuitBreaker<T>(
   adminId: string,
   operation: string,
   operationFn: () => Promise<T>,
-  fallbackFn?: () => Promise<T>
+  fallbackFn?: () => Promise<T>,
 ): Promise<T> {
   return aiCircuitBreaker.execute(adminId, operation, operationFn, fallbackFn);
 }

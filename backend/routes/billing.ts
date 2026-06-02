@@ -7,7 +7,9 @@ import {
   startTrial, getPlanById,
 } from "../services/stripeService.js";
 import { env } from "../config/env.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:billing");
 const router = Router();
 
 router.get("/billing/plans", (_req, res) => {
@@ -136,12 +138,12 @@ router.post("/billing/webhook", async (req: any, res) => {
 
     if (event?.adminId && event.subscription) {
       await dbService.updateSubscription(event.adminId, event.subscription);
-      console.log(`[STRIPE][${event.adminId}] Subscription updated: ${event.type}`);
+      log.info({ adminId: event.adminId, type: event.type }, "Subscription updated via webhook");
     }
 
     res.json({ received: true });
   } catch (error: any) {
-    console.error("[STRIPE] Webhook error:", error.message);
+    log.error({ err: error }, "Stripe webhook handler error");
     res.status(400).json({ error: error.message });
   }
 });

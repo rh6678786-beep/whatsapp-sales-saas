@@ -23,13 +23,26 @@ import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
 import { SalesState, Session } from './types';
 
+// Security: Use a more secure token storage pattern
+// In production, tokens should be stored in HttpOnly cookies
+// For now, use sessionStorage (cleared on tab close) instead of localStorage
+function isBrowser(): boolean { return typeof window !== 'undefined'; }
 
 function getAdminId(): string {
-  return localStorage.getItem('adminId') || 'default-admin';
+  return sessionStorage.getItem('adminId') || 'default-admin';
 }
 
 function getAuthToken(): string | null {
-  return localStorage.getItem('authToken');
+  return sessionStorage.getItem('authToken');
+}
+
+// Clear all auth state
+function clearAuth(): void {
+  const keys = ['isAdmin', 'adminId', 'authToken', 'teamMember', 'activeMainTab', 'whatsappSubTab', 'productsSubTab', 'featuresSubTab', 'theme'];
+  keys.forEach(k => {
+    try { sessionStorage.removeItem(k); } catch {}
+    try { localStorage.removeItem(k); } catch {}
+  });
 }
 
 axios.interceptors.request.use((config) => {
@@ -37,7 +50,7 @@ axios.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
-  config.headers['x-admin-id'] = getAdminId();
+  config.headers['x-correlation-id'] = crypto.randomUUID?.() || Date.now().toString(36);
   return config;
 });
 
@@ -67,22 +80,16 @@ const BulkImport = React.lazy(() => import('./components/BulkImport'));
 
 const TabFallback = () => <div className="flex items-center justify-center h-64 text-zinc-400 text-sm font-medium">Loading...</div>;
 
-
+// Response interceptor — security-hardened
 axios.interceptors.response.use(
   (response) => response,
   (error) => {
-    const isAuthError =
-      error.response?.status === 401 ||
-      (error.response?.status === 500 && (
-        error.response?.data?.error === 'Invalid or expired token' ||
-        error.response?.data?.error === 'Authentication required'
-      ));
-
-    if (isAuthError) {
-      localStorage.removeItem('isAdmin');
-      localStorage.removeItem('adminId');
-      localStorage.removeItem('authToken');
-      window.location.href = '/';
+    if (error.response?.status === 401) {
+      clearAuth();
+      // Only redirect if we thought we were authenticated
+      if (window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
     }
     return Promise.reject(error);
   }
@@ -95,16 +102,16 @@ type FeaturesSubTab = 'broadcast' | 'reengage' | 'autopost' | 'tester' | 'orders
 
 export default function App() {
   const [activeMainTab, setActiveMainTab] = useState<MainTab>(() => {
-    return (localStorage.getItem('activeMainTab') as MainTab) || 'dashboard';
+    return (sessionStorage.getItem('activeMainTab') as MainTab) || 'dashboard';
   });
   const [whatsappSubTab, setWhatsappSubTab] = useState<WhatsAppSubTab>(() => {
-    return (localStorage.getItem('whatsappSubTab') as WhatsAppSubTab) || 'connector';
+    return (sessionStorage.getItem('whatsappSubTab') as WhatsAppSubTab) || 'connector';
   });
   const [productsSubTab, setProductsSubTab] = useState<ProductsSubTab>(() => {
-    return (localStorage.getItem('productsSubTab') as ProductsSubTab) || 'products';
+    return (sessionStorage.getItem('productsSubTab') as ProductsSubTab) || 'products';
   });
   const [featuresSubTab, setFeaturesSubTab] = useState<FeaturesSubTab>(() => {
-    return (localStorage.getItem('featuresSubTab') as FeaturesSubTab) || 'broadcast';
+    return (sessionStorage.getItem('featuresSubTab') as FeaturesSubTab) || 'broadcast';
   });
   const [whatsappExpanded, setWhatsappExpanded] = useState(true);
   const [productsExpanded, setProductsExpanded] = useState(true);
@@ -116,9 +123,8 @@ export default function App() {
   });
   const [effectiveTheme, setEffectiveTheme] = useState<'light' | 'dark'>('light');
   const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return localStorage.getItem('isAdmin') === 'true';
+    return sessionStorage.getItem('isAdmin') === 'true' && !!sessionStorage.getItem('authToken');
   });
-  // When the user clicks "Get Started" we show the Login component instead of the landing page
   const [showLogin, setShowLogin] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
   const [showTeamLogin, setShowTeamLogin] = useState(false);
@@ -144,25 +150,23 @@ export default function App() {
     }
   }, [isAuthenticated]);
 
-  // Use ref for notifiedSessionIds to avoid dependency loop
   const notifiedSessionIdsRef = useRef(notifiedSessionIds);
   notifiedSessionIdsRef.current = notifiedSessionIds;
 
-  // Save active tab to localStorage on change
   React.useEffect(() => {
-    localStorage.setItem('activeMainTab', activeMainTab);
+    sessionStorage.setItem('activeMainTab', activeMainTab);
   }, [activeMainTab]);
 
   React.useEffect(() => {
-    localStorage.setItem('whatsappSubTab', whatsappSubTab);
+    sessionStorage.setItem('whatsappSubTab', whatsappSubTab);
   }, [whatsappSubTab]);
 
   React.useEffect(() => {
-    localStorage.setItem('productsSubTab', productsSubTab);
+    sessionStorage.setItem('productsSubTab', productsSubTab);
   }, [productsSubTab]);
 
   React.useEffect(() => {
-    localStorage.setItem('featuresSubTab', featuresSubTab);
+    sessionStorage.setItem('featuresSubTab', featuresSubTab);
   }, [featuresSubTab]);
 
   React.useEffect(() => {
@@ -182,7 +186,6 @@ export default function App() {
     return () => mediaQuery.removeEventListener('change', updateEffective);
   }, [theme]);
 
-  // Global Notification System - fixed to not cause infinite re-renders
   React.useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -198,7 +201,6 @@ export default function App() {
         setPendingCount(pending.length);
 
         pending.forEach(s => {
-          // Use ref to check without dependency loop
           if (!notifiedSessionIdsRef.current.has(s.id)) {
             if ('Notification' in window && Notification.permission === 'granted') {
               new Notification('New Payment Received!', {
@@ -206,32 +208,23 @@ export default function App() {
               });
             }
             setNotifiedSessionIds(prev => new Set(prev).add(s.id));
-
-            // Play notification beep using inline data URI (no AudioContext, no user interaction needed)
-            try {
-              const beep = new Audio('data:audio/wav;base64,UklGRtQEAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YbAEAAB/z/vurVcTASh3yfrxtV8YACJvw/f1vGcdAB1nvPX3w28iABhftfH6yXcoARNXre77z34uAg9Qpur81YY0AwxInuX92446BghBluD+4JZBCAY6jtv95Z5IDAM0htX86qZQDwIuf8/77q1XEwEod8n68bVfGAAib8P39bxnHQAdZ7z198NvIgAYX7Xx+sl3KAETV63u+89/LgIPUKbq/NWGNAMMSJ7l/duOOgYIQZbg/uCWQQgGOo7b/eWeSAwDNIbV/OqmUA8CLn/P++6tVxMBKHfJ+vG1XxgAIm/D9/W8Zx0AHWe89ffDbyIAGF+18frJdygBE1et7vvPfi4CD1Cm6vzVhjQDDEie5f3bjjoGCEGW4P7glkEIBjqO2/3lnkgMAzSG1fzqplAPAi5+z/vurVcTASh3yfrxtV8YACJvw/f1vGcdAB1nvPX3w28iABhftfH6yXcoARNXre77z34uAg9Qpur81YY0AwxInuX92446BghBluD+4JZBCAY6jtv95Z5IDAM0htX86qZQDwIuf8/77q1XEwEod8n68bVfGAAib8P39bxnHQAdZ7z198NvIgAYX7Xx+sl3KAETV63u+89+LgIPUKbq/NWGNAMMSJ7l/duOOgYIQZbg/uCWQQgGOo7b/eWeSAwDNIbV/OqmUA8CLn/P++6tVxMBKHfJ+vG1XxgAIm/D9/W8Zx0AHWe89ffDbyIAGF+18frJdygBE1et7vvPfi4CD1Cm6vzVhjQDDEie5f3bjjoGCEGW4P7glkEIBjqO2/3lnkgMAzSG1fzqplAPAi5/P++6tVxMBKHfJ+vG1XxgAIm/D9/W8Zx0AHWe89ffDbyIAGF+18frJdygBE1et7vvPfi4CD1Cm6vzVhjQDDEie5f3bjjoGCEGW4P7glkEIBjqO2/3lnkgMAzSG1fzqplAPAi4=');
-              beep.volume = 0.3;
-              beep.play().catch(() => { }); // Browser may block — silently ignore
-            } catch (e) { }
           }
         });
-      } catch (err) {
-        // Ignore silent errors
-      }
+      } catch { }
     };
 
     const interval = setInterval(checkPendingPayments, 10000);
     checkPendingPayments();
     return () => clearInterval(interval);
-  }, [isAuthenticated]); // Only depend on isAuthenticated, NOT notifiedSessionIds
+  }, [isAuthenticated]);
 
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
   const handleLogin = async () => {
     setIsAuthenticated(true);
-    localStorage.setItem('isAdmin', 'true');
-    localStorage.setItem('activeMainTab', 'dashboard');
-    localStorage.setItem('whatsappSubTab', 'connector');
+    sessionStorage.setItem('isAdmin', 'true');
+    sessionStorage.setItem('activeMainTab', 'dashboard');
+    sessionStorage.setItem('whatsappSubTab', 'connector');
     setActiveMainTab('dashboard');
     setWhatsappSubTab('connector');
     try {
@@ -239,9 +232,7 @@ export default function App() {
       if (res.data?.onboardingComplete === false) {
         setNeedsOnboarding(true);
       }
-    } catch {
-      // If settings fetch fails, treat as complete
-    }
+    } catch { }
   };
 
   const handleOnboardingComplete = () => {
@@ -249,9 +240,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('isAdmin');
-    localStorage.removeItem('adminId');
-    localStorage.removeItem('authToken');
+    clearAuth();
     setIsAuthenticated(false);
   };
 
@@ -374,7 +363,6 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
     <div className="min-h-screen bg-[#F8F9FA] dark:bg-zinc-950 transition-colors flex font-sans text-zinc-900 dark:text-zinc-100">
       <React.Suspense fallback={null}><div><Toaster /></div></React.Suspense>
-      {/* Sidebar */}
       <ErrorBoundary fallback={
         <aside className="w-[280px] bg-white dark:bg-zinc-950 border-r border-zinc-100 dark:border-zinc-800/50 flex items-center justify-center p-6">
           <p className="text-xs text-red-500 font-medium">Sidebar error</p>
@@ -386,7 +374,6 @@ export default function App() {
         className="bg-white dark:bg-zinc-950 border-r border-zinc-100 dark:border-zinc-800/50 overflow-hidden relative flex flex-col transition-colors shadow-lg dark:shadow-none"
       >
         <div className="p-6 flex-1">
-          {/* Brand */}
           <div className="flex items-center gap-3 mb-10 px-2">
             <div className="relative w-10 h-10">
               <div className="absolute inset-0 bg-emerald-500/30 rounded-xl blur-md" />
@@ -456,7 +443,6 @@ export default function App() {
                     )}
                   </button>
 
-                  {/* Products Sub-tabs */}
                   {tab.id === 'products' && activeMainTab === 'products' && productsExpanded && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
@@ -495,7 +481,6 @@ export default function App() {
                     </motion.div>
                   )}
 
-                  {/* WhatsApp Sub-tabs */}
                   {tab.id === 'whatsapp' && activeMainTab === 'whatsapp' && whatsappExpanded && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
@@ -534,7 +519,6 @@ export default function App() {
                     </motion.div>
                   )}
 
-                  {/* Features Sub-tabs */}
                   {tab.id === 'features' && activeMainTab === 'features' && featuresExpanded && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
@@ -585,7 +569,6 @@ export default function App() {
             })}
           </nav>
 
-          {/* Bottom section - Theme Toggle */}
           <div className="p-6 border-t border-zinc-100 dark:border-zinc-800/50 space-y-3 transition-colors">
             <div className="relative bg-zinc-100 dark:bg-zinc-900 rounded-2xl p-1 border border-zinc-200 dark:border-zinc-800 overflow-hidden">
               <motion.div
@@ -630,7 +613,6 @@ export default function App() {
       </motion.aside>
       </ErrorBoundary>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
         <header className="h-16 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-100 dark:border-zinc-800/50 flex items-center justify-between px-6 sticky top-0 z-10 transition-colors">
           <button

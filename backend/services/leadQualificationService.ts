@@ -230,16 +230,18 @@ export class LeadQualificationService {
       /baat karna/i
     ];
     
-    return humanRequestPatterns.some(pattern => pattern.test(session.metadata.lastCustomerMessage));
+    const lastMsg = session.metadata?.lastCustomerMessage || "";
+    return humanRequestPatterns.some(pattern => pattern.test(lastMsg));
   }
 
   private static isEnterpriseInquiry(session: Session): boolean {
-    // Check for enterprise/business indicators
+    const m = session.metadata;
+    if (!m) return false;
     const enterpriseIndicators = [
-      session.metadata?.businessUse === true,
-      session.metadata?.quantity && parseInt(session.metadata.quantity) > 5,
-      session.metadata?.inquiryType === 'bulk',
-      session.metadata?.companyName !== undefined
+      m.businessUse === true,
+      m.quantity && parseInt(m.quantity) > 5,
+      m.inquiryType === 'bulk',
+      m.companyName !== undefined
     ];
     
     return enterpriseIndicators.some(indicator => indicator === true);
@@ -261,7 +263,8 @@ export class LeadQualificationService {
       /nonsense/i
     ];
     
-    return angerPatterns.some(pattern => pattern.test(session.metadata.lastCustomerMessage.toLowerCase()));
+    const lastMsg = session.metadata?.lastCustomerMessage || "";
+    return angerPatterns.some(pattern => pattern.test(lastMsg.toLowerCase()));
   }
 
   private static getBuyingIntentLevel(session: Session): string {
@@ -325,48 +328,44 @@ export class LeadQualificationService {
    * @param session Session to update
    */
   private static extractQualificationData(message: string, session: Session): void {
+    const m = session.metadata;
+    if (!m) return;
     const text = message.toLowerCase();
 
-    // Extract budget information
-    if (!session.metadata.budget) {
+    if (!m.budget) {
       const budgetMatch = text.match(/(?:budget\s*:?\s*|can\s+(?:afford|spend)\s*:?\s*)(\d+(?:\s*k|\s*hazaar)?)/i);
       if (budgetMatch) {
-        session.metadata.budget = budgetMatch[1];
+        m.budget = budgetMatch[1];
       }
     }
 
-    // Extract urgency level
-    if (!session.metadata.urgencyLevel) {
+    if (!m.urgencyLevel) {
       if (this.isUrgencyRequirement(text)) {
-        session.metadata.urgencyLevel = 'High';
+        m.urgencyLevel = 'High';
       } else if (text.includes('soon') || text.includes('jaldi')) {
-        session.metadata.urgencyLevel = 'Medium';
+        m.urgencyLevel = 'Medium';
       } else {
-        session.metadata.urgencyLevel = 'Low';
+        m.urgencyLevel = 'Low';
       }
     }
 
-    // Extract product interest
     if (!session.selectedProductId) {
-      // This would normally come from product matching logic
-      // For now, we'll note that product interest was shown
-      session.metadata.productInterestShown = true;
+      m.productInterestShown = true;
     }
 
-    // Extract use case (business/personal)
-    if (!session.metadata.useCase) {
+    if (!m.useCase) {
       const businessKeywords = ['business', 'office', 'shop', 'store', 'company', 'commerce', 'trade'];
       const personalKeywords = ['personal', 'home', 'family', 'self', 'individual'];
-      
+
       const businessScore = businessKeywords.filter(kw => text.includes(kw)).length;
       const personalScore = personalKeywords.filter(kw => text.includes(kw)).length;
-      
+
       if (businessScore > personalScore) {
-        session.metadata.useCase = 'Business';
+        m.useCase = 'Business';
       } else if (personalScore > businessScore) {
-        session.metadata.useCase = 'Personal';
+        m.useCase = 'Personal';
       } else {
-        session.metadata.useCase = 'Unknown';
+        m.useCase = 'Unknown';
       }
     }
   }

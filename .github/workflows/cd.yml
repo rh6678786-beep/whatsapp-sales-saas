@@ -6,19 +6,59 @@ on:
     branches: [main, master]
     types: [completed]
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
-  deploy:
+  docker:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - name: Deploy to production
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [docker]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to production server
         run: |
-          echo "Deploy step — add your deployment target here"
-          # Example: rsync, scp, docker push, or Vercel/Netlify CLI
+          echo "Deployment triggered — image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha"
+          echo ""
+          echo "Recommended deploy targets:"
+          echo "  • SSH pull + restart: ssh user@host 'docker compose pull && docker compose up -d'"
+          echo "  • Kubernetes: kubectl set image deployment/app app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo "  • Cloud Run: gcloud run deploy saascloser --image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"

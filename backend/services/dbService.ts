@@ -1,43 +1,67 @@
-import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import pg from "pg";
-import { Session, Message, Product, Order, Deal, SalesState, DripCampaign } from "../../src/types";
+import * as pg from "pg";
+import { env } from "../lib/env.js";
+import { createChildLogger } from "../lib/logger.js";
+import { getRedis, isRedisConnected } from "../lib/redis.js";
 
-let connectionString = process.env.DATABASE_URL || "";
-connectionString = connectionString.replace(/[?&]sslmode=[^&]*/g, "").replace(/[?&]$/, "");
-// Use transaction mode (port 6543) instead of session mode (5432) to avoid
-// PgBouncer connection slot exhaustion (pool_size: 15 limit)
-connectionString = connectionString.replace(":5432", ":6543");
+const log = createChildLogger("db");
+
+// Connection configuration
+const DATABASE_URL = env.DATABASE_URL;
+const POOL_MAX = parseInt(process.env.DB_POOL_MAX || "10", 10);
+
+// SSL configuration — use env setting, never silently disable
+const sslConfig = env.DB_SSL_REJECT_UNAUTHORIZED
+  ? { rejectUnauthorized: true }
+  : false;
+
 export const pool = new pg.Pool({
-  connectionString,
-  ssl: { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== "false" },
-  max: 3,
+  connectionString: DATABASE_URL,
+  ssl: sslConfig,
+  max: POOL_MAX,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
 });
-pool.on("connect", () => console.log("[DB] PostgreSQL pool connected"));
-pool.on("error", (err) => {
-  console.warn("[DB] PostgreSQL pool error (non-fatal):", err.message);
-});
-pool.on("remove", () => {});
-const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter });
 
-// Keep-alive: ping Supabase every 60s to prevent idle connection termination
-setInterval(async () => {
+pool.on("connect", () => log.info("PostgreSQL pool connected"));
+pool.on("error", (err) => log.warn({ err }, "PostgreSQL pool error (non-fatal)"));
+pool.on("remove", () => { /* pool client removed */ });
+
+const adapter = new PrismaPg(pool);
+export const prisma = new PrismaClient({ adapter });
+
+async function dbNow(): Promise<Date> {
+  const rows = await prisma.$queryRaw<Array<{ now: Date }>>`SELECT NOW() as now`;
+  return rows[0].now;
+}
+
+// Keep-alive to prevent idle connection termination
+const keepAliveInterval = setInterval(async () => {
   try {
     await pool.query("SELECT 1");
   } catch (err: any) {
-    console.warn("[DB] Keep-alive ping failed:", err.message);
+    log.warn({ err }, "Keep-alive ping failed");
   }
 }, 60000);
 
-function isConnectionError(e: any): boolean {
-  const msg = (e?.message || "").toLowerCase();
-  const code = e?.code || "";
+// Cleanup on process exit
+process.on("SIGTERM", () => {
+  clearInterval(keepAliveInterval);
+  pool.end();
+});
+process.on("SIGINT", () => {
+  clearInterval(keepAliveInterval);
+  pool.end();
+});
+
+// ---- Error classification ----
+
+function isConnectionError(e: unknown): boolean {
+  const msg = ((e as any)?.message || "").toLowerCase();
+  const code = (e as any)?.code || "";
   return (
     msg.includes("connection terminated") ||
     msg.includes("connection refused") ||
@@ -52,14 +76,14 @@ function isConnectionError(e: any): boolean {
     code === "ECONNRESET" ||
     code === "ECONNREFUSED" ||
     code === "ETIMEDOUT" ||
-    code === "57P01" ||   // admin_shutdown
-    code === "57P02" ||   // crash_shutdown
-    code === "57P03" ||   // cannot_connect_now
-    code === "08000" ||   // connection_exception
-    code === "08001" ||   // sqlclient_unable_to_establish_sqlconnection
-    code === "08003" ||   // connection_does_not_exist
-    code === "08004" ||   // sqlserver_rejected_establishment_of_sqlconnection
-    code === "08006"     // connection_failure
+    code === "57P01" ||
+    code === "57P02" ||
+    code === "57P03" ||
+    code === "08000" ||
+    code === "08001" ||
+    code === "08003" ||
+    code === "08004" ||
+    code === "08006"
   );
 }
 
@@ -67,20 +91,124 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
-    } catch (e: any) {
+    } catch (e: unknown) {
       const isLast = i === retries - 1;
       const isConnErr = isConnectionError(e);
       if (!isConnErr || isLast) throw e;
       const delayMs = 1000 * (i + 1);
-      console.warn(`[DB_RETRY] Connection error (attempt ${i + 1}/${retries}): ${e.message}. Reconnecting in ${delayMs}ms...`);
-      await new Promise(r => setTimeout(r, delayMs));
+      log.warn({ attempt: i + 1, retries, err: (e as Error).message }, "DB connection error, retrying");
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
   throw new Error("Unreachable");
 }
 
+// ---- Redis cache helpers ----
+
+async function cacheGet<T>(key: string): Promise<T | null> {
+  if (!isRedisConnected()) return null;
+  try {
+    const redis = getRedis()!;
+    const data = await redis.get(key);
+    return data ? JSON.parse(data) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function cacheSet(key: string, value: unknown, ttlSeconds = 30): Promise<void> {
+  if (!isRedisConnected()) return;
+  try {
+    const redis = getRedis()!;
+    await redis.setex(key, ttlSeconds, JSON.stringify(value));
+  } catch {
+    // Non-critical
+  }
+}
+
+async function cacheDel(key: string): Promise<void> {
+  if (!isRedisConnected()) return;
+  try {
+    const redis = getRedis()!;
+    await redis.del(key);
+  } catch {
+    // Non-critical
+  }
+}
+
+function cacheKey(prefix: string, ...parts: string[]): string {
+  return `db:${prefix}:${parts.join(":")}`;
+}
+
+// ---- Data mappers (unchanged from original) ----
+
+import { Session, Message, Product, Order, Deal, SalesState, DripCampaign, SessionMetadata } from "../../src/types";
+import type { Prisma } from "@prisma/client";
+
+type PrismaSession = Prisma.SessionGetPayload<{}>;
+type PrismaMessage = Prisma.MessageGetPayload<{}>;
+type PrismaOrder = Prisma.OrderGetPayload<{}>;
+
+function toSession(record: PrismaSession): Session {
+  return {
+    id: record.id,
+    userId: record.userId,
+    state: record.state as SalesState,
+    selectedProductId: record.selectedProductId ?? undefined,
+    lastMessageAt: record.lastMessageAt instanceof Date ? record.lastMessageAt.toISOString() : record.lastMessageAt,
+    remindersCount: record.remindersCount,
+    lastReminderAt: record.lastReminderAt instanceof Date ? record.lastReminderAt.toISOString() : record.lastReminderAt ?? undefined,
+    isBlocked: record.isBlocked ?? undefined,
+    metadata: (record.metadata as SessionMetadata) ?? undefined,
+  };
+}
+
+function toMessage(record: PrismaMessage): Message {
+  return {
+    id: record.id,
+    sessionId: record.sessionId,
+    role: record.role as "user" | "model" | "human",
+    text: record.text,
+    timestamp: record.timestamp instanceof Date ? record.timestamp.toISOString() : record.timestamp,
+    imageUrl: record.imageUrl ?? undefined,
+    videoUrl: record.videoUrl ?? undefined,
+  };
+}
+
+function toOrder(record: PrismaOrder): Order {
+  return {
+    id: record.id,
+    userId: record.userId,
+    productId: record.productId,
+    status: record.status as "VERIFIED" | "DELIVERED" | "PENDING" | "REJECTED" | "SHIPPED",
+    paymentScreenshotUrl: record.paymentScreenshotUrl ?? undefined,
+    shippingAddress: record.shippingAddress ?? undefined,
+    customerName: record.customerName ?? undefined,
+    customerPhone: record.customerPhone ?? undefined,
+    amount: record.amount,
+    costPrice: record.costPrice,
+    createdAt: record.createdAt instanceof Date ? record.createdAt.toISOString() : record.createdAt,
+    trackingId: record.trackingId ?? undefined,
+    courier: record.courier ?? undefined,
+  };
+}
+
+const SETTINGS_FIELDS = [
+  "geminiApiKey", "geminiModel", "storeName", "jazzCashNumber",
+  "advanceAmount", "businessLogo", "email", "phone", "address",
+  "onboardingComplete", "notificationEmail", "smtpHost", "smtpPort",
+  "smtpUser", "smtpPass", "emailReportsEnabled", "language",
+  "verifiedEmail",
+] as const;
+
+const SETTINGS_JSON_FIELDS = [
+  "paymentConfig", "reEngagement", "facebook", "instagram",
+  "telegram", "subscription", "aiLearningPatterns", "memoryConfig",
+  "proactiveConfig", "teamMembers",
+] as const;
+
 const defaultSettings = {
-  geminiApiKey: process.env.GEMINI_API_KEY || "",
+  geminiApiKey: "",
   geminiModel: "gemini-2.0-flash",
   storeName: "SalesForce AI",
   jazzCashNumber: "0300-1234567",
@@ -118,66 +246,7 @@ const defaultSettings = {
   },
 };
 
-function toSession(record: any): Session {
-  return {
-    id: record.id,
-    userId: record.userId,
-    state: record.state as SalesState,
-    selectedProductId: record.selectedProductId ?? undefined,
-    lastMessageAt: record.lastMessageAt instanceof Date ? record.lastMessageAt.toISOString() : record.lastMessageAt,
-    remindersCount: record.remindersCount,
-    lastReminderAt: record.lastReminderAt instanceof Date ? record.lastReminderAt.toISOString() : record.lastReminderAt ?? undefined,
-    isBlocked: record.isBlocked ?? undefined,
-    metadata: record.metadata ?? undefined,
-  };
-}
-
-function toMessage(record: any): Message {
-  return {
-    id: record.id,
-    sessionId: record.sessionId,
-    role: record.role,
-    text: record.text,
-    timestamp: record.timestamp instanceof Date ? record.timestamp.toISOString() : record.timestamp,
-    imageUrl: record.imageUrl ?? undefined,
-    videoUrl: record.videoUrl ?? undefined,
-  };
-}
-
-function toOrder(record: any): Order {
-  return {
-    id: record.id,
-    userId: record.userId,
-    productId: record.productId,
-    status: record.status,
-    paymentScreenshotUrl: record.paymentScreenshotUrl ?? undefined,
-    shippingAddress: record.shippingAddress ?? undefined,
-    customerName: record.customerName ?? undefined,
-    customerPhone: record.customerPhone ?? undefined,
-    amount: record.amount,
-    costPrice: record.costPrice,
-    createdAt: record.createdAt instanceof Date ? record.createdAt.toISOString() : record.createdAt,
-    trackingId: record.trackingId ?? undefined,
-    courier: record.courier ?? undefined,
-  };
-}
-
-const SETTINGS_FIELDS = [
-  "geminiApiKey", "geminiModel", "storeName", "jazzCashNumber",
-  "advanceAmount", "businessLogo", "email", "phone", "address",
-  "onboardingComplete", "notificationEmail", "smtpHost", "smtpPort",
-  "smtpUser", "smtpPass", "emailReportsEnabled", "language",
-  "verifiedEmail",
-] as const;
-
-const SETTINGS_JSON_FIELDS = [
-  "paymentConfig", "reEngagement", "facebook", "instagram",
-  "telegram", "subscription", "aiLearningPatterns", "memoryConfig",
-  "proactiveConfig", "teamMembers",
-] as const;
-
-// In-memory cache for products (valid for 1 second)
-const productCache: Map<string, { data: Product[]; ts: number }> = new Map();
+// ---- Exported service ----
 
 export const dbService = {
   async getSettings(adminId: string) {
@@ -213,6 +282,7 @@ export const dbService = {
         update: { ...scalar, ...json },
       })
     );
+    await cacheDel(cacheKey("settings", adminId));
     return this.getSettings(adminId);
   },
 
@@ -230,12 +300,13 @@ export const dbService = {
   },
 
   async createSession(adminId: string, userId: string): Promise<Session> {
+    const now = await dbNow();
     const session: any = {
       adminId,
       id: userId,
       userId,
       state: SalesState.NEW,
-      lastMessageAt: new Date(),
+      lastMessageAt: now,
       remindersCount: 0,
       metadata: {
         leadScore: 0,
@@ -253,7 +324,7 @@ export const dbService = {
   async updateSession(adminId: string, userId: string, data: Partial<Session>) {
     const updateData: any = { ...data };
     if (data.lastMessageAt || data.state || data.metadata) {
-      updateData.lastMessageAt = new Date();
+      updateData.lastMessageAt = await dbNow();
     }
     delete updateData.id;
     delete updateData.userId;
@@ -301,12 +372,10 @@ export const dbService = {
   },
 
   async getAllProducts(adminId: string): Promise<Product[]> {
-    const cache = productCache.get(adminId);
-    const now = Date.now();
-    if (cache && now - cache.ts < 30000) {
-      // Return cached data if fetched within the last second
-      return cache.data;
-    }
+    const ck = cacheKey("products", adminId);
+    const cached = await cacheGet<Product[]>(ck);
+    if (cached) return cached;
+
     try {
       const records = await withRetry(() =>
         prisma.product.findMany({ where: { adminId, deleted: false } })
@@ -321,12 +390,11 @@ export const dbService = {
         videos: r.videos,
         stock: r.stock ?? 10,
       }));
-      // Store in cache
-      productCache.set(adminId, { data: result, ts: now });
-      console.log(`[DB][${adminId}] Fetched ${result.length} products`);
+      await cacheSet(ck, result, 30);
+      log.info({ adminId, count: result.length }, "Fetched products");
       return result;
     } catch (err: any) {
-      console.error(`[DB][${adminId}] getAllProducts error:`, err.message);
+      log.error({ err, adminId }, "getAllProducts error");
       return [];
     }
   },
@@ -377,8 +445,7 @@ export const dbService = {
         },
       })
     );
-    // Invalidate cache after insertion
-    productCache.delete(adminId);
+    await cacheDel(cacheKey("products", adminId));
     return { id: record.id, ...product, stock: (product as any).stock ?? 10 };
   },
 
@@ -389,8 +456,7 @@ export const dbService = {
         data,
       })
     );
-    // Invalidate cache after update
-    productCache.delete(adminId);
+    await cacheDel(cacheKey("products", adminId));
   },
 
   async softDeleteProduct(adminId: string, id: string) {
@@ -400,7 +466,7 @@ export const dbService = {
         data: { deleted: true, deletedAt: new Date() },
       })
     );
-    productCache.delete(adminId);
+    await cacheDel(cacheKey("products", adminId));
   },
 
   async restoreProduct(adminId: string, id: string) {
@@ -410,7 +476,7 @@ export const dbService = {
         data: { deleted: false, deletedAt: null },
       })
     );
-    productCache.delete(adminId);
+    await cacheDel(cacheKey("products", adminId));
   },
 
   async permanentDeleteProduct(adminId: string, id: string) {
@@ -419,12 +485,9 @@ export const dbService = {
         where: { id, adminId },
       })
     );
-    productCache.delete(adminId);
+    await cacheDel(cacheKey("products", adminId));
   },
 
-  // ==========================================
-  // DEAL CRUD
-  // ==========================================
   async getAllDeals(adminId: string): Promise<Deal[]> {
     const records = await withRetry(() =>
       prisma.deal.findMany({
@@ -632,7 +695,9 @@ export const dbService = {
     for (const s of recentSessions) {
       const p = s.selectedProductId ? productMap.get(s.selectedProductId) : null;
       const meta = s.metadata as any;
-      const price = meta?.negotiationState?.currentOfferedPrice ?? p?.price ?? 0;
+      const negotiated = meta?.negotiationState?.currentOfferedPrice;
+      const price = negotiated ?? p?.price;
+      if (price == null) continue;
       const cost = p?.costPrice ?? 0;
       totalSales += price;
       totalProfit += price - cost;
@@ -703,9 +768,6 @@ export const dbService = {
     return records.map(toSession);
   },
 
-  // ==========================================
-  // PROACTIVE ENGINE HELPERS
-  // ==========================================
   async getSessionsByState(adminId: string, states: SalesState[], excludeBlocked = true): Promise<Session[]> {
     try {
       const records = await withRetry(() =>
@@ -746,9 +808,6 @@ export const dbService = {
     return this.getSessionsByState(adminId, targetStates);
   },
 
-  // ==========================================
-  // DRIP CAMPAIGN CRUD
-  // ==========================================
   async getCampaigns(adminId: string): Promise<DripCampaign[]> {
     try {
       const records = await withRetry(() =>
@@ -810,9 +869,6 @@ export const dbService = {
     );
   },
 
-  // ==========================================
-  // RECOMMENDATION HELPERS
-  // ==========================================
   async getCrossSellProductIds(adminId: string, productId: string, limit = 3): Promise<string[]> {
     try {
       const result = await pool.query(
@@ -858,9 +914,7 @@ export const dbService = {
     } catch { return 0; }
   },
 
-  // ==========================================
   // AUTH: Admin Credential Storage
-  // ==========================================
   async registerAdmin(adminId: string, passwordHash: string) {
     await withRetry(() =>
       prisma.admin.upsert({
@@ -882,9 +936,6 @@ export const dbService = {
     }
   },
 
-  // ==========================================
-  // SUBSCRIPTION STORAGE
-  // ==========================================
   async getSubscription(adminId: string): Promise<any | null> {
     try {
       const admin = await withRetry(() =>
@@ -906,9 +957,6 @@ export const dbService = {
     );
   },
 
-  // ==========================================
-  // USAGE COUNTERS
-  // ==========================================
   async getUsageCounts(adminId: string): Promise<{ sessionsThisMonth: number; broadcastsThisMonth: number; productCount: number }> {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
@@ -951,9 +999,6 @@ export const dbService = {
     }
   },
 
-  // ==========================================
-  // OTP STORAGE (reuses the same PrismaClient)
-  // ==========================================
   async saveOtp(email: string, otp: string, adminId: string, password: string, storeName: string | null, expiresAt: Date, phone?: string | null) {
     await withRetry(() =>
       prisma.otpStore.upsert({
@@ -973,7 +1018,11 @@ export const dbService = {
   },
 
   async deleteOtp(email: string) {
-    await withRetry(() => prisma.otpStore.delete({ where: { email } }).catch(() => {}));
+    try {
+      await withRetry(() => prisma.otpStore.delete({ where: { email } }));
+    } catch {
+      log.warn({ email }, "OTP deletion failed (may already be deleted)");
+    }
   },
 
   async fixPhantomAdmins(): Promise<number> {
@@ -988,6 +1037,44 @@ export const dbService = {
       return admins.map(a => a.adminId);
     } catch {
       return [];
+    }
+  },
+
+  // ---- AI Cost Tracking ----
+
+  async logAiCost(adminId: string, model: string, inputTokens: number, outputTokens: number, cost: number) {
+    await withRetry(() =>
+      prisma.$executeRaw`INSERT INTO ai_cost_log (admin_id, model, input_tokens, output_tokens, cost) VALUES (${adminId}, ${model}, ${inputTokens}, ${outputTokens}, ${cost})`
+    );
+  },
+
+  async getAdminDailyCost(adminId: string): Promise<number> {
+    try {
+      const result = await withRetry(() =>
+        prisma.$queryRaw<{ total: number }[]>`
+          SELECT COALESCE(SUM(cost), 0) AS total
+          FROM ai_cost_log
+          WHERE admin_id = ${adminId} AND created_at >= date_trunc('day', NOW())
+        `
+      );
+      return Number(result[0]?.total || 0);
+    } catch {
+      return 0;
+    }
+  },
+
+  async getAdminMonthlyCost(adminId: string): Promise<number> {
+    try {
+      const result = await withRetry(() =>
+        prisma.$queryRaw<{ total: number }[]>`
+          SELECT COALESCE(SUM(cost), 0) AS total
+          FROM ai_cost_log
+          WHERE admin_id = ${adminId} AND created_at >= date_trunc('month', NOW())
+        `
+      );
+      return Number(result[0]?.total || 0);
+    } catch {
+      return 0;
     }
   },
 };

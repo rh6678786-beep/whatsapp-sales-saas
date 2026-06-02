@@ -36,10 +36,10 @@ export default function LiveChat() {
   }, []);
 
   useEffect(() => {
-    const adminId = localStorage.getItem('adminId');
+    const adminId = sessionStorage.getItem('adminId');
     if (!adminId) return;
-    const token = localStorage.getItem('authToken') || undefined;
-    const socket = io('', { auth: { token }, query: { adminId }, transports: ['websocket', 'polling'] });
+    const token = sessionStorage.getItem('authToken') || undefined;
+    const socket = io('', { auth: { token }, transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('new_message', (data: { sessionId: string; message: Message }) => {

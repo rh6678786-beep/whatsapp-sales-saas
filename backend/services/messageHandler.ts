@@ -9,6 +9,9 @@ import { getLatestSummary, generateConversationSummary, extractCustomerPreferenc
 import { getFullProductRecommendations } from "./recommendationService";
 import { checkEscalationTriggers, isHandoffActive } from "./escalationService";
 import { AILearningService } from "./aiLearningService";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("message-handler");
 
 interface SimulatorData {
   session: Session;
@@ -114,7 +117,7 @@ export async function processIncomingMessage(
 
     // 5. Handoff Check — skip AI if handoff is active
     if (!isSimulator && isHandoffActive(session)) {
-      console.log(`[HANDOFF][${adminId}] Handoff active for ${userId}, skipping AI response`);
+      log.info({ adminId, userId }, "Handoff active, skipping AI response");
       return { text: "", images: [], videos: [] };
     }
 
@@ -180,7 +183,7 @@ export async function processIncomingMessage(
     if (!isSimulator && !session.metadata?.handoffTriggered) {
       const escalation = checkEscalationTriggers(session, responseText);
       if (escalation.shouldEscalate) {
-        console.log(`[HANDOFF][${adminId}] Escalation triggered for ${userId}: ${escalation.reason} (${escalation.triggerSource})`);
+        log.info({ adminId, userId, reason: escalation.reason, source: escalation.triggerSource }, "Escalation triggered");
         session.metadata = {
           ...session.metadata,
           handoffTriggered: true,
@@ -198,7 +201,7 @@ export async function processIncomingMessage(
       const status = (session.metadata?.leadStatus || 'COLD') as 'HOT' | 'WARM' | 'COLD';
       AILearningService.initialize(adminId).then(() => {
         AILearningService.analyzeChat(body, responseText, score, status, adminId);
-      }).catch(() => {});
+      }).catch((err) => log.warn({ err, adminId }, "AI learning fire-and-forget failed"));
     }
 
     // 7. Post-processing Actions
@@ -291,7 +294,7 @@ export async function processIncomingMessage(
           const userMsgId = userMsg.id || `${adminId}:${userId}:${now}`;
           generateEmbedding(body, adminId).then(emb => {
             if (emb) storeEmbedding(adminId, userId, userMsgId, "user", body, emb);
-          }).catch(() => {});
+          }).catch((err) => log.warn({ err, adminId }, "User embedding fire-and-forget failed"));
         }
 
         // Store embedding for AI response
@@ -299,7 +302,7 @@ export async function processIncomingMessage(
           const modelMsgId = modelMsg.id || `${adminId}:${userId}:${now + 1}`;
           generateEmbedding(cleanResponse, adminId).then(emb => {
             if (emb) storeEmbedding(adminId, userId, modelMsgId, "model", cleanResponse, emb);
-          }).catch(() => {});
+          }).catch((err) => log.warn({ err, adminId }, "Model embedding fire-and-forget failed"));
         }
 
         // Trigger summarization at threshold
@@ -314,9 +317,9 @@ export async function processIncomingMessage(
               if (summary) {
                 await storeSummary(adminId, userId, summary, totalMessages, preferences);
               }
-            }).catch(() => {});
+            }).catch((err) => log.warn({ err, adminId }, "Summarization persistence failed"));
           }
-        }).catch(() => {});
+        }).catch((err) => log.warn({ err, adminId }, "Summary generation check failed"));
       }
     }
 
@@ -327,7 +330,7 @@ export async function processIncomingMessage(
       shouldBlockUser: shouldBlock 
     };
   } catch (error: any) {
-    console.error(`[HANDLER ERROR][${adminId}]`, error.message);
-    return { text: "Sorry, there was a temporary technical issue. Please try again in a moment. 😊" };
+    log.error({ err: error, adminId }, "Message handler error");
+    return { text: "Sorry, there was a temporary technical issue. Please try again in a moment." };
   }
 }

@@ -5,7 +5,9 @@ import path from "path";
 import fs from "fs";
 import { getAdminId } from "../middleware/auth.js";
 import { logAction } from "../services/auditLogService.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:upload");
 const router = Router();
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
@@ -86,7 +88,7 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
       logAction(adminId, "upload", "file", undefined,
         { valid: validFiles.map(v => v.original), rejected: rejectedFiles },
         req.ip
-      ).catch(() => {});
+      ).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
       return res.status(400).json({
         error: `Content validation failed for: ${rejectedFiles.join(", ")}`,
         validFiles: validFiles.map(v => v.url),
@@ -97,7 +99,7 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
     logAction(adminId, "upload", "file", undefined,
       { files: validFiles.map(v => v.original), urls: validFiles.map(v => v.url) },
       req.ip
-    ).catch(() => {});
+    ).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     res.json({ urls: validFiles.map(v => v.url) });
   } catch (error: any) {
     if (error.code === "LIMIT_FILE_SIZE") {

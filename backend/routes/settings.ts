@@ -5,7 +5,9 @@ import { hashPassword, comparePassword } from "../services/authService.js";
 import { logAction } from "../services/auditLogService.js";
 import { validate } from "../middleware/validate.js";
 import { updateSettingsSchema } from "../schemas/settings.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:settings");
 const router = Router();
 
 router.get("/settings", async (req, res) => {
@@ -34,7 +36,7 @@ router.post("/settings", validate(updateSettingsSchema), async (req, res) => {
 
     const settings = await dbService.updateSettings(adminId, body);
     console.log(`[SETTINGS][${adminId}] Configuration changes merged and saved successfully.`);
-    logAction(adminId, "update", "settings", undefined, { keys: Object.keys(body) }, req.ip).catch(() => {});
+    logAction(adminId, "update", "settings", undefined, { keys: Object.keys(body) }, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     res.json(settings);
   } catch (error: any) {
     const safeId = req.headers["x-admin-id"] as string || "unknown";

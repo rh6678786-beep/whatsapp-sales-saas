@@ -25,29 +25,31 @@ const defaultCapabilities: PlanCapabilities = {
   paymentVerification: false,
 };
 
-let cachedFeatures: PlanCapabilities | null = null;
-let cacheTime = 0;
-
-export function useFeatures(): PlanCapabilities {
+export function useFeatures(adminId?: string | null): PlanCapabilities {
   const [features, setFeatures] = useState<PlanCapabilities>(defaultCapabilities);
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchFeatures = async () => {
-      if (cachedFeatures && Date.now() - cacheTime < 30000) {
-        setFeatures(cachedFeatures);
-        return;
-      }
       try {
         const res = await axios.get('/api/billing/features');
-        cachedFeatures = res.data;
-        cacheTime = Date.now();
-        setFeatures(res.data);
+        if (!cancelled) {
+          setFeatures(res.data);
+        }
       } catch {
-        setFeatures(defaultCapabilities);
+        if (!cancelled) {
+          setFeatures(defaultCapabilities);
+        }
       }
     };
+
     fetchFeatures();
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [adminId]); // Re-fetch if admin changes
 
   return features;
 }

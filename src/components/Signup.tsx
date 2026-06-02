@@ -215,9 +215,9 @@ export default function Signup({ onSignup, onSignIn }: SignupProps) {
     try {
       const res = await axios.post('/api/auth/verify-otp', { email, otp });
       if (res.data?.token) {
-        localStorage.setItem('isAdmin', 'true');
-        localStorage.setItem('adminId', res.data.adminId);
-        localStorage.setItem('authToken', res.data.token);
+        sessionStorage.setItem('isAdmin', 'true');
+        sessionStorage.setItem('adminId', res.data.adminId);
+        sessionStorage.setItem('authToken', res.data.token);
         setStep(4);
       }
     } catch (err: any) {
