@@ -1,6 +1,9 @@
 import axios from "axios";
 import { dbService } from "./dbService";
 import { processIncomingMessage } from "./messageHandler";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("telegram");
 
 const TG_API = "https://api.telegram.org/bot";
 
@@ -17,10 +20,10 @@ export async function setTelegramWebhook(webhookUrl: string, adminId: string = '
       url: webhookUrl,
       allowed_updates: ["message"]
     });
-    console.log("[TG] Webhook set to:", webhookUrl);
+    log.info({ webhookUrl }, "Telegram webhook set");
     return true;
   } catch (error: any) {
-    console.error("[TG WEBHOOK ERROR]", error?.response?.data || error?.message);
+    log.error({ err: error?.response?.data || error?.message }, "Telegram webhook error");
     return false;
   }
 }
@@ -47,7 +50,7 @@ export async function sendTelegramMessage(chatId: string, text: string, adminId:
     });
     return true;
   } catch (error: any) {
-    console.error("[TG SEND ERROR]", error?.response?.data || error?.message);
+    log.error({ err: error?.response?.data || error?.message }, "Telegram send error");
     return false;
   }
 }
@@ -60,7 +63,7 @@ export async function handleTelegramIncoming(chatId: number, messageText: string
       await sendTelegramMessage(String(chatId), result.text);
     }
   } catch (error: any) {
-    console.error("[TG HANDLER ERROR]", error?.message);
+    log.error({ err: error?.message }, "Telegram handler error");
     await sendTelegramMessage(String(chatId), "Maazrat, momentarily ek issue aa gaya hai — aap apna message 1-2 minute mein dobara bhejein, pakka kaam kar jaye ga. 😊");
   }
 }
@@ -70,7 +73,7 @@ export async function testTelegramConnection(botToken: string): Promise<{ succes
     const res = await axios.get(`${TG_API}${botToken}/getMe`);
     if (res.data?.ok && res.data?.result) {
       const bot = res.data.result;
-      console.log(`[TG TEST] Connected to bot: @${bot.username}`);
+      log.info({ bot: `@${bot.username}` }, "Telegram connection test successful");
       return { success: true, botName: `@${bot.username}` };
     }
     return { success: false, error: "Invalid bot token" };

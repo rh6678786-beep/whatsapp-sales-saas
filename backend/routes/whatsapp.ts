@@ -14,11 +14,11 @@ router.get("/whatsapp/status", requireAuth, (req, res) => {
   }
 });
 
-router.post("/whatsapp/init", requireAuth, (req, res) => {
+router.post("/whatsapp/init", requireAuth, async (req, res) => {
   try {
     const adminId = getAdminId(req);
-    initializeWhatsAppClient(adminId);
-    res.json({ success: true });
+    await initializeWhatsAppClient(adminId);
+    res.json({ success: true, message: "WhatsApp client initialization started. Check status for QR code or ready state." });
   } catch (e: any) {
     res.status(401).json({ error: e.message });
   }

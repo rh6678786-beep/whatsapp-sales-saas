@@ -199,4 +199,101 @@ router.post("/auth/change-password", async (req, res) => {
   }
 });
 
+/**
+ * REQUEST PASSWORD RESET
+ * Generates a password reset token and sends it via email
+ */
+router.post("/auth/forgot-password", authRateLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    // Find admin by email (don't leak whether email exists)
+    const admin = await dbService.findAdminByEmail(email);
+
+    // Always respond with success to prevent email enumeration
+    if (!admin) {
+      return res.json({ 
+        success: true, 
+        message: "If an account exists, a password reset link has been sent to your email" 
+      });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 3600000); // 1 hour
+
+    // Store reset token (implement this in your database)
+    // For now, we'll store in a simple temporary structure
+    // In production, add a PasswordReset table to Prisma schema
+    await dbService.storePasswordReset(admin.adminId, resetTokenHash, expiresAt);
+
+    // Send email with reset link
+    const resetLink = `${process.env.APP_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
+    
+    try {
+      // TODO: Implement email service
+      log.info({ adminId: admin.adminId, email }, `Password reset link would be sent to: ${resetLink}`);
+      // await emailService.send(email, 'Password Reset', resetLink);
+    } catch (emailError) {
+      log.error({ err: emailError }, "Failed to send password reset email");
+    }
+
+    res.json({ 
+      success: true, 
+      message: "If an account exists, a password reset link has been sent to your email" 
+    });
+  } catch (error: any) {
+    log.error({ err: error }, "forgot-password error");
+    res.status(500).json({ error: "Failed to process password reset request" });
+  }
+});
+
+/**
+ * RESET PASSWORD
+ * Validates reset token and updates password
+ */
+router.post("/auth/reset-password", authRateLimiter, async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: "Token and new password are required" });
+    }
+
+    const pwCheck = validatePassword(newPassword);
+    if (!pwCheck.valid) {
+      return res.status(400).json({ error: pwCheck.error });
+    }
+
+    // Hash token to look up in database
+    const resetTokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Verify reset token exists and is not expired
+    const resetRecord = await dbService.getPasswordReset(resetTokenHash);
+
+    if (!resetRecord || resetRecord.expiresAt < new Date()) {
+      log.warn({ token: token.slice(0, 8) }, "Attempt to reset password with invalid/expired token");
+      return res.status(400).json({ error: "Invalid or expired reset token" });
+    }
+
+    // Update password
+    const passwordHash = await hashPassword(newPassword);
+    await dbService.registerAdmin(resetRecord.adminId, passwordHash);
+
+    // Delete used reset token
+    await dbService.deletePasswordReset(resetTokenHash);
+
+    log.info({ adminId: resetRecord.adminId }, "Password reset via token");
+    res.json({ success: true, message: "Password has been reset. You can now login." });
+  } catch (error: any) {
+    log.error({ err: error }, "reset-password error");
+    res.status(500).json({ error: "Failed to reset password" });
+  }
+});
+
 export default router;

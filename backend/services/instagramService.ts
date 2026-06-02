@@ -1,6 +1,9 @@
 import axios from "axios";
 import { dbService } from "./dbService";
 import { processIncomingMessage } from "./messageHandler";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("instagram");
 
 const FB_GRAPH_URL = "https://graph.facebook.com/v18.0";
 
@@ -18,7 +21,7 @@ export async function sendInstagramMessage(igUserId: string, text: string, admin
     });
     return true;
   } catch (error: any) {
-    console.error("[IG SEND ERROR]", error?.response?.data || error?.message);
+    log.error({ err: error?.response?.data || error?.message }, "Instagram send error");
     return false;
   }
 }
@@ -31,10 +34,10 @@ export async function handleInstagramIncoming(senderIgId: string, messageText: s
       await sendInstagramMessage(senderIgId, result.text);
     }
     if (result?.shouldBlockUser) {
-      console.log(`[IG BLOCK] ${senderIgId}`);
+      log.info({ igId: senderIgId }, "Instagram block");
     }
   } catch (error: any) {
-    console.error("[IG HANDLER ERROR]", error?.message);
+    log.error({ err: error?.message }, "Instagram handler error");
     await sendInstagramMessage(senderIgId, "Maazrat, ek chota sa technical glitch aaya — aap apna message wapis bhejein, main turant reply kar deta hoon. 😊");
   }
 }
@@ -44,7 +47,7 @@ export async function verifyInstagramWebhook(mode: string, token: string, challe
   const expectedToken = settings.instagram?.verifyToken;
 
   if (mode === "subscribe" && token === expectedToken) {
-    console.log("[IG WEBHOOK] Verified successfully");
+    log.info({}, "Instagram webhook verified successfully");
     return challenge;
   }
   return null;
@@ -56,7 +59,7 @@ export async function testInstagramConnection(igBusinessId: string, accessToken:
       params: { access_token: accessToken, fields: "name,id,username" }
     });
     if (res.data?.id) {
-      console.log(`[IG TEST] Connected to: ${res.data.username || res.data.name}`);
+      log.info({ user: res.data.username || res.data.name }, "Instagram connection test successful");
       return { success: true };
     }
     return { success: false, error: "Invalid response from Instagram API" };
@@ -82,7 +85,7 @@ export async function getInstagramConversations(accessToken: string, adminId: st
       name: c.participants?.find((p: any) => p.id !== igId)?.username || "Unknown"
     })) || [];
   } catch (error: any) {
-    console.error("[IG CONVERSATIONS ERROR]", error?.response?.data || error?.message);
+    log.error({ err: error?.response?.data || error?.message }, "Instagram conversations error");
     return [];
   }
 }

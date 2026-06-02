@@ -1,14 +1,15 @@
 import { Router } from "express";
 import { dbService } from "../services/dbService.js";
 import { getAdminId } from "../middleware/auth.js";
-import { generateEnhancedPost } from "../services/aiService.js";
+import { generateEnhancedPost, getAIClient } from "../services/aiService.js";
 import fs from "fs";
 import path from "path";
 import axios from "axios";
 import { randomUUID } from "crypto";
-import { GoogleGenAI } from '@google/genai';
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:publish");
 const router = Router();
 
 const PUBLICATIONS_FILE = path.join(process.cwd(), "publications.json");
@@ -155,7 +156,7 @@ router.post("/publish", async (req, res) => {
                     access_token: ig.pageAccessToken
                   });
                 } catch (e: any) {
-                  console.error("IG Video publish failed:", e?.response?.data || e.message);
+                  log.error({ err: e, platform: 'instagram', adminId: '(scheduled)' }, "IG Video publish failed");
                 }
               }, 5000);
             }
@@ -167,7 +168,7 @@ router.post("/publish", async (req, res) => {
             await sendWhatsAppMessage(adminId, "status-update", content);
           }
         } catch (platErr: any) {
-          console.error(`[PUBLISH ERROR][${platform}]`, platErr?.response?.data || platErr.message);
+          log.error({ err: platErr, adminId, platform }, "Publish platform error");
           errors.push(`${platform}: ${platErr?.response?.data?.error?.message || platErr.message}`);
         }
       }
@@ -193,8 +194,9 @@ router.post("/publish", async (req, res) => {
 });
 
 router.post("/publish/generate-media", async (req, res) => {
+  let adminId = "";
   try {
-    const adminId = getAdminId(req);
+    adminId = getAdminId(req);
     const { prompt, mediaType } = req.body;
     if (!prompt || !mediaType) {
       return res.status(400).json({ error: "prompt and mediaType are required" });
@@ -202,14 +204,14 @@ router.post("/publish/generate-media", async (req, res) => {
 
     if (mediaType === 'video') {
       return res.json({ success: false, error: 'Video generation is not available yet. Please use Image generation or upload a video manually.' });
-    }
-
-    const { GoogleGenAI } = await import('@google/genai');
-    const settings = await dbService.getSettings(adminId);
+    }    const settings = await dbService.getSettings(adminId);
     if (!settings.geminiApiKey) {
       return res.status(400).json({ error: "Gemini API key not configured" });
     }
-    const genAI = new GoogleGenAI({ apiKey: settings.geminiApiKey });
+    const genAI = await getAIClient(adminId);
+    if (!genAI) {
+      return res.status(400).json({ error: "AI client not available. Check your API key configuration." });
+    }
 
     const response = await genAI.models.generateContent({
       model: "gemini-2.0-flash-exp",
@@ -249,36 +251,39 @@ Return ONLY the image, no extra text.` }],
 
     res.json({ success: true, url: `/uploads/${filename}` });
   } catch (error: any) {
-    console.error('[GENERATE MEDIA ERROR]', error.message);
+    log.error({ err: error, adminId }, "Generate media error");
     res.status(500).json({ error: error.message || 'Failed to generate media' });
   }
 });
 
 router.post("/publish/generate-product-post", async (req, res) => {
+  let adminId = "";
   try {
-    const adminId = getAdminId(req);
+    adminId = getAdminId(req);
     const { productId } = req.body;
-    console.log(`[PRODUCT POST] Request received for productId: ${productId}, adminId: ${adminId}`);
+    log.info({ adminId, productId }, "Product post request received");
     if (!productId) {
       return res.status(400).json({ error: "productId is required" });
     }
 
     const products = await dbService.getAllProducts(adminId);
-    console.log(`[PRODUCT POST] Found ${products.length} products`);
+    log.info({ adminId, count: products.length }, "Products fetched for product post");
     const product = products.find(p => p.id === productId);
     if (!product) {
-      console.log(`[PRODUCT POST] Product ${productId} not found in ${products.length} products`);
+      log.warn({ adminId, productId }, "Product not found for post generation");
       return res.status(404).json({ error: "Product not found" });
     }
-    console.log(`[PRODUCT POST] Found product: ${product.name}, images: ${product.images?.length || 0}`);
+    log.info({ adminId, productName: product.name, imageCount: product.images?.length || 0 }, "Found product for post generation");
 
     const settings = await dbService.getSettings(adminId);
     if (!settings.geminiApiKey) {
       return res.status(400).json({ error: "Gemini API key not configured" });
     }
 
-    const { GoogleGenAI } = await import('@google/genai');
-    const genAI = new GoogleGenAI({ apiKey: settings.geminiApiKey });
+    const genAI = await getAIClient(adminId);
+    if (!genAI) {
+      return res.status(400).json({ error: "AI client not available. Check your API key configuration." });
+    }
 
     const productImage = product.images?.[0] || null;
     const featuresText = product.features?.join(", ") || "No features listed";
@@ -320,25 +325,25 @@ Use the product image (if provided) to analyze the product visually and incorpor
         let mimeType = 'image/jpeg';
 
         if (productImage.startsWith('http://') || productImage.startsWith('https://')) {
-          console.log(`[PRODUCT POST] Downloading remote image from URL`);
+          log.info({ adminId }, "Downloading remote image for product post");
           const imgResponse = await fetch(productImage);
           if (imgResponse.ok) {
             const arrayBuffer = await imgResponse.arrayBuffer();
             imageBuffer = Buffer.from(arrayBuffer);
             mimeType = imgResponse.headers.get('content-type') || 'image/jpeg';
-            console.log(`[PRODUCT POST] Remote image downloaded, size: ${imageBuffer.length} bytes, type: ${mimeType}`);
+            log.info({ adminId, size: imageBuffer.length, mimeType }, "Remote image downloaded");
           } else {
-            console.log(`[PRODUCT POST] Failed to download remote image, status: ${imgResponse.status}`);
+            log.warn({ adminId, status: imgResponse.status }, "Failed to download remote image");
           }
         } else {
           const imagePath = path.join(process.cwd(), productImage.replace(/^\//, ""));
-          console.log(`[PRODUCT POST] Looking for local image at: ${imagePath}`);
+          log.info({ adminId, imagePath }, "Looking for local image");
           if (fs.existsSync(imagePath)) {
             imageBuffer = fs.readFileSync(imagePath);
             mimeType = productImage.endsWith('.png') ? 'image/png' : 'image/jpeg';
-            console.log(`[PRODUCT POST] Local image found, size: ${imageBuffer.length} bytes, type: ${mimeType}`);
+            log.info({ adminId, size: imageBuffer.length, mimeType }, "Local image found");
           } else {
-            console.log(`[PRODUCT POST] Local image file not found at: ${imagePath}`);
+            log.warn({ adminId, imagePath }, "Local image file not found");
           }
         }
 
@@ -348,11 +353,11 @@ Use the product image (if provided) to analyze the product visually and incorpor
           });
         }
       } catch (imgErr) {
-        console.warn("[PRODUCT POST] Could not process product image:", (imgErr as Error).message);
+        log.warn({ err: imgErr, adminId }, "Could not process product image");
       }
     }
 
-    console.log(`[PRODUCT POST] Calling Gemini API with ${parts.length} parts, model: ${settings.geminiModel || "gemini-2.0-flash"}`);
+    log.info({ adminId, parts, model: settings.geminiModel || "gemini-2.0-flash" }, "Calling Gemini API for product post");
 
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Gemini API timed out after 30 seconds')), 30000)
@@ -367,7 +372,7 @@ Use the product image (if provided) to analyze the product visually and incorpor
     const response = await Promise.race([geminiPromise, timeoutPromise]) as any;
 
     const generatedContent = response.text || "";
-    console.log(`[PRODUCT POST] Gemini response received, content length: ${generatedContent.length}`);
+    log.info({ adminId, contentLength: generatedContent.length }, "Gemini response received for product post");
 
     if (!generatedContent.trim()) {
       return res.json({
@@ -383,7 +388,7 @@ Use the product image (if provided) to analyze the product visually and incorpor
       mediaUrl: productImage || undefined,
     });
   } catch (error: any) {
-    console.error('[PRODUCT POST GENERATE ERROR]', error.message);
+    log.error({ err: error, adminId }, "Product post generate error");
     res.status(500).json({ error: error.message || "Failed to generate product post" });
   }
 });

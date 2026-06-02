@@ -1,4 +1,4 @@
-import { SalesState, Product, Session } from "../../src/types";
+import { SalesState } from "../../src/types";
 
 export function determineNextState(
   currentState: SalesState,
@@ -57,7 +57,13 @@ export function determineNextState(
       return SalesState.VERIFIED;
 
     case SalesState.ORDER_CONFIRMED:
+      if (text.includes("deliver") || text.includes("received") || text.includes("mil gaya") || text.includes("a gaya") || text.includes("delivered")) {
+        return SalesState.DELIVERED;
+      }
       return SalesState.ORDER_CONFIRMED;
+
+    case SalesState.DELIVERED:
+      return SalesState.DELIVERED;
 
     default:
       return currentState;

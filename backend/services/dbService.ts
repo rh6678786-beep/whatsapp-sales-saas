@@ -1,9 +1,10 @@
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import * as pg from "pg";
 import { env } from "../lib/env.js";
 import { createChildLogger } from "../lib/logger.js";
 import { getRedis, isRedisConnected } from "../lib/redis.js";
+import { encrypt, decrypt, isEncrypted } from "../lib/encryption.js";
 
 const log = createChildLogger("db");
 
@@ -41,7 +42,7 @@ async function dbNow(): Promise<Date> {
 // Keep-alive to prevent idle connection termination
 const keepAliveInterval = setInterval(async () => {
   try {
-    await pool.query("SELECT 1");
+    await prisma.$queryRaw`SELECT 1`;
   } catch (err: any) {
     log.warn({ err }, "Keep-alive ping failed");
   }
@@ -143,7 +144,7 @@ function cacheKey(prefix: string, ...parts: string[]): string {
 // ---- Data mappers (unchanged from original) ----
 
 import { Session, Message, Product, Order, Deal, SalesState, DripCampaign, SessionMetadata } from "../../src/types";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "../../generated/client";
 
 type PrismaSession = Prisma.SessionGetPayload<{}>;
 type PrismaMessage = Prisma.MessageGetPayload<{}>;
@@ -201,6 +202,9 @@ const SETTINGS_FIELDS = [
   "verifiedEmail",
 ] as const;
 
+// Sensitive fields that should be encrypted at rest
+const ENCRYPTED_FIELDS = ["geminiApiKey", "smtpPass"] as const;
+
 const SETTINGS_JSON_FIELDS = [
   "paymentConfig", "reEngagement", "facebook", "instagram",
   "telegram", "subscription", "aiLearningPatterns", "memoryConfig",
@@ -246,6 +250,50 @@ const defaultSettings = {
   },
 };
 
+// ---- Encryption helpers for sensitive fields ----
+
+/**
+ * Encrypt sensitive fields in settings before storage
+ */
+function encryptSettings(settings: any): any {
+  const encrypted = { ...settings };
+  for (const field of ENCRYPTED_FIELDS) {
+    if (encrypted[field] && typeof encrypted[field] === "string" && encrypted[field].length > 0) {
+      try {
+        // Skip if already encrypted
+        if (!isEncrypted(encrypted[field])) {
+          encrypted[field] = encrypt(encrypted[field]);
+        }
+      } catch (err) {
+        log.warn({ err, field }, "Failed to encrypt sensitive field");
+        // Don't fail - just keep as-is
+      }
+    }
+  }
+  return encrypted;
+}
+
+/**
+ * Decrypt sensitive fields in settings after retrieval
+ */
+function decryptSettings(settings: any): any {
+  const decrypted = { ...settings };
+  for (const field of ENCRYPTED_FIELDS) {
+    if (decrypted[field] && typeof decrypted[field] === "string") {
+      try {
+        // Check if it looks like encrypted data (hex:hex:hex format)
+        if (isEncrypted(decrypted[field])) {
+          decrypted[field] = decrypt(decrypted[field]);
+        }
+      } catch (err) {
+        log.warn({ err, field }, "Failed to decrypt sensitive field - may not be encrypted");
+        // Don't fail - return as-is (could be unencrypted old data)
+      }
+    }
+  }
+  return decrypted;
+}
+
 // ---- Exported service ----
 
 export const dbService = {
@@ -262,13 +310,17 @@ export const dbService = {
     for (const field of SETTINGS_JSON_FIELDS) {
       settings[field] = (admin as any)[field] ?? null;
     }
-    return settings;
+    // Decrypt sensitive fields before returning
+    return decryptSettings(settings);
   },
 
   async updateSettings(adminId: string, newSettings: any) {
+    // Encrypt sensitive fields before storing
+    const toStore = encryptSettings(newSettings);
+    
     const scalar: any = {};
     const json: any = {};
-    for (const [key, value] of Object.entries(newSettings)) {
+    for (const [key, value] of Object.entries(toStore)) {
       if ((SETTINGS_FIELDS as readonly string[]).includes(key)) {
         scalar[key] = value;
       } else {
@@ -323,7 +375,8 @@ export const dbService = {
 
   async updateSession(adminId: string, userId: string, data: Partial<Session>) {
     const updateData: any = { ...data };
-    if (data.lastMessageAt || data.state || data.metadata) {
+    // Only update lastMessageAt to now if state or metadata changed but no explicit lastMessageAt was provided
+    if (!data.lastMessageAt && (data.state || data.metadata)) {
       updateData.lastMessageAt = await dbNow();
     }
     delete updateData.id;
@@ -584,31 +637,35 @@ export const dbService = {
   },
 
   async getOrdersPaginated(adminId: string, page: number, pageSize: number): Promise<{ orders: Order[]; total: number }> {
-    const offset = (page - 1) * pageSize;
-    const countResult = await pool.query(
-      `SELECT COUNT(*) FROM "Order" WHERE "adminId" = $1`,
-      [adminId]
+    const skip = (page - 1) * pageSize;
+    const [records, total] = await withRetry(() =>
+      Promise.all([
+        prisma.order.findMany({
+          where: { adminId },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: pageSize,
+        }),
+        prisma.order.count({ where: { adminId } }),
+      ])
     );
-    const total = parseInt(countResult.rows[0].count, 10) || 0;
-    const dataResult = await pool.query(
-      `SELECT * FROM "Order" WHERE "adminId" = $1 ORDER BY "createdAt" DESC LIMIT $2 OFFSET $3`,
-      [adminId, pageSize, offset]
-    );
-    return { orders: dataResult.rows.map(toOrder), total };
+    return { orders: records.map(toOrder), total };
   },
 
   async getMessagesPaginated(adminId: string, sessionId: string, page: number, pageSize: number): Promise<{ messages: Message[]; total: number }> {
-    const offset = (page - 1) * pageSize;
-    const countResult = await pool.query(
-      `SELECT COUNT(*) FROM "Message" WHERE "adminId" = $1 AND "sessionId" = $2`,
-      [adminId, sessionId]
+    const skip = (page - 1) * pageSize;
+    const [records, total] = await withRetry(() =>
+      Promise.all([
+        prisma.message.findMany({
+          where: { adminId, sessionId },
+          orderBy: { timestamp: "asc" },
+          skip,
+          take: pageSize,
+        }),
+        prisma.message.count({ where: { adminId, sessionId } }),
+      ])
     );
-    const total = parseInt(countResult.rows[0].count, 10) || 0;
-    const dataResult = await pool.query(
-      `SELECT * FROM "Message" WHERE "adminId" = $1 AND "sessionId" = $2 ORDER BY "timestamp" ASC LIMIT $3 OFFSET $4`,
-      [adminId, sessionId, pageSize, offset]
-    );
-    return { messages: dataResult.rows.map(toMessage), total };
+    return { messages: records.map(toMessage), total };
   },
 
   async getAllOrders(adminId: string): Promise<Order[]> {
@@ -722,24 +779,23 @@ export const dbService = {
   },
 
   async getSessionsPaginated(adminId: string, page: number, pageSize: number, state?: string): Promise<{ sessions: Session[]; total: number }> {
-    const offset = (page - 1) * pageSize;
-    let whereClause = `"adminId" = $1`;
-    const params: any[] = [adminId];
+    const skip = (page - 1) * pageSize;
+    const where: any = { adminId };
     if (state) {
-      whereClause += ` AND "state" = $2`;
-      params.push(state);
+      where.state = state;
     }
-    const countResult = await pool.query(
-      `SELECT COUNT(*) FROM "Session" WHERE ${whereClause}`,
-      params
+    const [records, total] = await withRetry(() =>
+      Promise.all([
+        prisma.session.findMany({
+          where,
+          orderBy: { lastMessageAt: "desc" },
+          skip,
+          take: pageSize,
+        }),
+        prisma.session.count({ where }),
+      ])
     );
-    const total = parseInt(countResult.rows[0].count, 10) || 0;
-    params.push(pageSize, offset);
-    const dataResult = await pool.query(
-      `SELECT * FROM "Session" WHERE ${whereClause} ORDER BY "lastMessageAt" DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
-      params
-    );
-    return { sessions: dataResult.rows.map(toSession), total };
+    return { sessions: records.map(toSession), total };
   },
 
   async getRecentSessions(adminId: string, limit: number): Promise<Session[]> {
@@ -788,11 +844,31 @@ export const dbService = {
     try {
       const today = new Date();
       const mmdd = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      const result = await pool.query(
-        `SELECT * FROM "Session" WHERE "adminId" = $1 AND "isBlocked" = false AND "metadata"->>'birthday' LIKE $2`,
-        [adminId, `%${mmdd}%`]
+      const result = await withRetry(() =>
+        prisma.$queryRaw<PrismaSession[]>`
+          SELECT * FROM "Session"
+          WHERE "adminId" = ${adminId}
+            AND "isBlocked" = false
+            AND "metadata"->>'birthday' LIKE ${'%' + mmdd + '%'}
+        `
       );
-      return (result.rows || []).map(toSession);
+      return (result || []).map(toSession);
+    } catch { return []; }
+  },
+
+  async getCustomerOrderedProductIds(adminId: string, userId: string): Promise<string[]> {
+    try {
+      const orders = await withRetry(() =>
+        prisma.order.findMany({
+          where: {
+            adminId,
+            userId,
+            status: { in: ["VERIFIED", "DELIVERED"] },
+          },
+          select: { productId: true },
+        })
+      );
+      return orders.map(o => o.productId);
     } catch { return []; }
   },
 
@@ -871,28 +947,19 @@ export const dbService = {
 
   async getCrossSellProductIds(adminId: string, productId: string, limit = 3): Promise<string[]> {
     try {
-      const result = await pool.query(
-        `SELECT o2."productId", COUNT(*) as frequency
-         FROM "Order" o1
-         JOIN "Order" o2 ON o1."userId" = o2."userId" AND o1."productId" != o2."productId"
-         WHERE o1."productId" = $1 AND o1."adminId" = $2 AND o2."adminId" = $2
-           AND o1."status" IN ('VERIFIED', 'DELIVERED')
-         GROUP BY o2."productId"
-         ORDER BY frequency DESC
-         LIMIT $3`,
-        [productId, adminId, limit]
+      const result = await withRetry(() =>
+        prisma.$queryRaw<Array<{ productId: string }>>`
+          SELECT o2."productId", COUNT(*) as frequency
+          FROM "Order" o1
+          JOIN "Order" o2 ON o1."userId" = o2."userId" AND o1."productId" != o2."productId"
+          WHERE o1."productId" = ${productId} AND o1."adminId" = ${adminId} AND o2."adminId" = ${adminId}
+            AND o1."status" IN ('VERIFIED', 'DELIVERED')
+          GROUP BY o2."productId"
+          ORDER BY frequency DESC
+          LIMIT ${limit}
+        `
       );
-      return result.rows.map(r => r.productId);
-    } catch { return []; }
-  },
-
-  async getCustomerOrderedProductIds(adminId: string, userId: string): Promise<string[]> {
-    try {
-      const result = await pool.query(
-        `SELECT "productId" FROM "Order" WHERE "adminId" = $1 AND "userId" = $2 AND "status" IN ('VERIFIED', 'DELIVERED')`,
-        [adminId, userId]
-      );
-      return result.rows.map(r => r.productId);
+      return result.map(r => r.productId);
     } catch { return []; }
   },
 
@@ -996,6 +1063,58 @@ export const dbService = {
       return count > 0;
     } catch {
       return false;
+    }
+  },
+
+  async findAdminByEmail(email: string): Promise<any | null> {
+    try {
+      return await withRetry(() =>
+        prisma.admin.findFirst({ where: { verifiedEmail: email } })
+      );
+    } catch {
+      return null;
+    }
+  },
+
+  async storePasswordReset(adminId: string, tokenHash: string, expiresAt: Date) {
+    try {
+      // Create a temporary record - for production, add PasswordReset table to schema
+      // For now, store in a Redis-like structure or add to schema
+      const key = `password_reset:${tokenHash}`;
+      const redis = getRedis();
+      if (redis && isRedisConnected()) {
+        await redis.set(key, JSON.stringify({ adminId, expiresAt }), 'EX', 3600);
+      }
+    } catch (err) {
+      log.warn({ err }, "Failed to store password reset token");
+    }
+  },
+
+  async getPasswordReset(tokenHash: string): Promise<{ adminId: string; expiresAt: Date } | null> {
+    try {
+      const key = `password_reset:${tokenHash}`;
+      const redis = getRedis();
+      if (redis && isRedisConnected()) {
+        const data = await redis.get(key);
+        if (data) {
+          return JSON.parse(data);
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  async deletePasswordReset(tokenHash: string) {
+    try {
+      const key = `password_reset:${tokenHash}`;
+      const redis = getRedis();
+      if (redis && isRedisConnected()) {
+        await redis.del(key);
+      }
+    } catch (err) {
+      log.warn({ err }, "Failed to delete password reset token");
     }
   },
 

@@ -2,6 +2,9 @@ import { pool } from "./dbService";
 import { dbService } from "./dbService";
 import { getAIClient } from "./aiService";
 import { Message } from "../../src/types";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("ai:summary");
 
 const DEFAULT_SUMMARIZATION_THRESHOLD = 20;
 
@@ -48,7 +51,7 @@ Summary:`;
 
     return response.text || null;
   } catch (err: any) {
-    console.warn(`[SUMMARY] Failed to generate summary for ${adminId}/${sessionId}:`, err.message);
+    log.warn({ err: err.message, adminId, sessionId }, "Failed to generate summary");
     return null;
   }
 }
@@ -93,7 +96,7 @@ ${conversationText}`;
     }
     return {};
   } catch (err: any) {
-    console.warn(`[SUMMARY] Failed to extract preferences:`, err.message);
+    log.warn({ err: err.message, adminId, sessionId }, "Failed to extract preferences");
     return {};
   }
 }
@@ -114,7 +117,7 @@ export async function storeSummary(
       [adminId, sessionId, summary, messageCount, JSON.stringify(preferences)]
     );
   } catch (err: any) {
-    console.warn(`[SUMMARY] Failed to store summary:`, err.message);
+    log.warn({ err: err.message, adminId, sessionId }, "Failed to store summary");
   }
 }
 
@@ -145,7 +148,7 @@ export async function getLatestSummary(
       updatedAt: row.updated_at,
     };
   } catch (err: any) {
-    console.warn(`[SUMMARY] Failed to get latest summary:`, err.message);
+    log.warn({ err: err.message, adminId, sessionId }, "Failed to get latest summary");
     return null;
   }
 }

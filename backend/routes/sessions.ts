@@ -88,14 +88,14 @@ router.patch("/sessions/:id", async (req, res) => {
         };
 
         await dbService.createOrder(adminId, newOrder);
-        console.log(`[DB][${adminId}] Successfully synchronized and created order: ${sessionId}`);
+        log.info({ adminId, sessionId }, "Successfully synchronized and created order");
       }
     }
 
     res.json({ success: true });
   } catch (error: any) {
     const safeId = req.headers["x-admin-id"] as string || "unknown";
-    console.error(`[SESSION_PATCH_ERROR][${safeId}]`, error.message);
+    log.error({ adminId: safeId, err: error }, "Session patch error");
     res.status(500).json({ error: error.message });
   }
 });

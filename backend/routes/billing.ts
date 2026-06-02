@@ -6,7 +6,7 @@ import {
   createCheckoutSession, createBillingPortalSession, handleWebhook,
   startTrial, getPlanById,
 } from "../services/stripeService.js";
-import { env } from "../config/env.js";
+import { env } from "../lib/env.js";
 import { createChildLogger } from "../lib/logger.js";
 
 const log = createChildLogger("route:billing");

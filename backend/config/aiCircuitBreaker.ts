@@ -165,6 +165,13 @@ export class CircuitBreaker {
     }
   }
 
+  private clearAllMonitoring(): void {
+    for (const [key, interval] of this.monitoringIntervals) {
+      clearInterval(interval);
+    }
+    this.monitoringIntervals.clear();
+  }
+
   async execute<T>(
     adminId: string,
     operation: string,
@@ -226,14 +233,15 @@ export class CircuitBreaker {
 
   resetAll(): void {
     this.state.clear();
-    this.monitoringIntervals.forEach((interval) => clearInterval(interval));
-    this.monitoringIntervals.clear();
+    this.clearAllMonitoring();
     log.info("All circuit breakers reset");
   }
 
   destroy(): void {
     this.destroyed = true;
-    this.resetAll();
+    this.clearAllMonitoring();
+    this.state.clear();
+    log.info("Circuit breaker destroyed");
   }
 }
 

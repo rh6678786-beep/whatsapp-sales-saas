@@ -5,7 +5,11 @@ import { processDripCampaigns } from "./dripCampaignService.js";
 import { processAbandonedCarts, processPriceDropAlerts } from "./proactiveTriggers.js";
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
 import { Session } from "../../src/types";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("proactive:engine");
+
+// Track daily sent messages per customer (cleaned hourly)
 const DAILY_SENT_MAP = new Map<string, number>();
 
 function getDailyKey(adminId: string, userId: string): string {
@@ -25,14 +29,14 @@ function isQuietHours(cfg: any): boolean {
 
 function canSendToCustomer(adminId: string, userId: string, cfg: any, remindersCount: number): boolean {
   if (isQuietHours(cfg)) {
-    console.log(`[PROACTIVE] Quiet hours — skipping ${userId}`);
+    log.debug({ adminId, userId }, "Quiet hours — skipping");
     return false;
   }
   const key = getDailyKey(adminId, userId);
   const sentToday = DAILY_SENT_MAP.get(key) || 0;
   const maxPerDay = cfg.maxPerDay || 5;
   if (sentToday >= maxPerDay) {
-    console.log(`[PROACTIVE] ${userId} hit daily limit (${maxPerDay})`);
+    log.debug({ adminId, userId, maxPerDay }, "Hit daily limit");
     return false;
   }
   DAILY_SENT_MAP.set(key, sentToday + 1);
@@ -44,7 +48,7 @@ async function sendProactiveMessage(adminId: string, session: Session, message: 
     return false;
   }
   if (!isWhatsAppReady(adminId)) {
-    console.warn(`[PROACTIVE] WhatsApp not ready for ${adminId}`);
+    log.warn({ adminId }, "WhatsApp not ready");
     return false;
   }
   try {
@@ -56,7 +60,7 @@ async function sendProactiveMessage(adminId: string, session: Session, message: 
     } as any);
     return true;
   } catch (e) {
-    console.error(`[PROACTIVE] Failed to send to ${session.userId}:`, (e as any)?.message);
+    log.error({ err: e, adminId, userId: session.userId }, "Failed to send proactive message");
     return false;
   }
 }
@@ -134,13 +138,13 @@ export async function processProactiveForAdmin(adminId: string): Promise<{
       totalRun += result.sent + result.failed;
       details.push(`${handler.name}: sent=${result.sent}, failed=${result.failed}`);
     } catch (e: any) {
-      console.error(`[PROACTIVE][${adminId}] ${handler.name} error:`, e.message);
+      log.error({ err: e.message, adminId, handler: handler.name }, "Proactive handler error");
       details.push(`${handler.name}: ERROR — ${e.message}`);
     }
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  console.log(`[PROACTIVE][${adminId}] Done. Sent: ${totalSent}, Failed: ${totalFailed}`);
+  log.info({ adminId, sent: totalSent, failed: totalFailed }, "Proactive run complete");
   return { sent: totalSent, failed: totalFailed, details };
 }
 
@@ -153,22 +157,31 @@ function clearDailyMap() {
   }
 }
 
-setInterval(clearDailyMap, 60 * 60 * 1000);
+const clearDailyMapInterval = setInterval(clearDailyMap, 60 * 60 * 1000);
+
+// Clean up interval on process exit
+const cleanupProactiveInterval = () => clearInterval(clearDailyMapInterval);
+process.on("SIGTERM", cleanupProactiveInterval);
+process.on("SIGINT", cleanupProactiveInterval);
+
+if (process.env.VITEST || process.env.NODE_ENV === "test") {
+  clearInterval(clearDailyMapInterval);
+}
 
 export async function processAllAdmins(): Promise<void> {
-  console.log("[PROACTIVE] Starting proactive run for all admins...");
+  log.info({}, "Starting proactive run for all admins");
   const adminIds = await dbService.getAllAdminIds();
   if (adminIds.length === 0) {
-    console.log("[PROACTIVE] No admins found");
+    log.info({}, "No admins found");
     return;
   }
   for (const adminId of adminIds) {
     try {
       await processProactiveForAdmin(adminId);
     } catch (e: any) {
-      console.error(`[PROACTIVE][${adminId}] Fatal error:`, e.message);
+      log.error({ err: e.message, adminId }, "Fatal error in proactive run");
     }
     await new Promise(r => setTimeout(r, 2000));
   }
-  console.log("[PROACTIVE] All admins processed");
+  log.info({}, "All admins processed");
 }

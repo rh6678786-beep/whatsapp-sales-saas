@@ -1,11 +1,10 @@
 import { dbService } from "./dbService.js";
 import { DripCampaign, Session } from "../../src/types";
-import { GoogleGenAI } from "@google/genai";
+import { getAIClient } from "./aiService.js";
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
+import { createChildLogger } from "../lib/logger.js";
 
-function getAIClient(apiKey: string) {
-  return new GoogleGenAI({ apiKey: apiKey || "" });
-}
+const log = createChildLogger("drip-campaign");
 
 interface CampaignEnrollment {
   campaignId: string;
@@ -74,20 +73,24 @@ export async function processDripCampaigns(adminId: string): Promise<{
         if (hoursSinceEnrollment < dayThreshold) continue;
 
         let message = step.message;
-        if (step.aiGenerated && settings.geminiApiKey) {
+        if (step.aiGenerated) {
           try {
-            const ai = getAIClient(settings.geminiApiKey);
-            const productName = session.selectedProductId
-              ? (await dbService.getAllProducts(adminId)).find(p => p.id === session.selectedProductId)?.name
-              : null;
-            const prompt = `You are a Pakistani business owner sending a follow-up. Campaign: "${campaign.name}", Step ${nextStepIndex + 1}/${campaign.steps.length}. Customer state: ${session.state}. ${productName ? `Interested in: ${productName}.` : ""} Max 2 lines, Roman Urdu + English, warm. Original template: "${step.message}". Make it natural and specific.`;
-            const response = await ai.models.generateContent({
-              model: settings.geminiModel || "gemini-2.0-flash",
-              contents: [{ text: "Generate the drip campaign message." }],
-              config: { systemInstruction: prompt, temperature: 0.8 },
-            });
-            if (response.text) message = response.text;
-          } catch {}
+            const ai = await getAIClient(adminId);
+            if (ai) {
+              const productName = session.selectedProductId
+                ? (await dbService.getAllProducts(adminId)).find(p => p.id === session.selectedProductId)?.name
+                : null;
+              const prompt = `You are a Pakistani business owner sending a follow-up. Campaign: "${campaign.name}", Step ${nextStepIndex + 1}/${campaign.steps.length}. Customer state: ${session.state}. ${productName ? `Interested in: ${productName}.` : ""} Max 2 lines, Roman Urdu + English, warm. Original template: "${step.message}". Make it natural and specific.`;
+              const response = await ai.models.generateContent({
+                model: settings.geminiModel || "gemini-2.0-flash",
+                contents: [{ text: "Generate the drip campaign message." }],
+                config: { systemInstruction: prompt, temperature: 0.8 },
+              });
+              if (response.text) message = response.text;
+            }
+          } catch (e) {
+            log.warn({ err: e, adminId, campaignId: campaign.id }, "Failed to AI-generate drip message");
+          }
         }
 
         if (isWhatsAppReady(adminId)) {
@@ -104,14 +107,13 @@ export async function processDripCampaigns(adminId: string): Promise<{
           failed++;
         }
 
-        await new Promise(r => setTimeout(r, 2000));
       } catch (e) {
-        console.error(`[DRIP_CAMPAIGN] Failed ${session.userId}:`, (e as any)?.message);
+        log.error({ err: e, adminId, userId: session.userId }, "Drip campaign failed");
         failed++;
       }
     }
   }
 
-  console.log(`[DRIP_CAMPAIGN][${adminId}] Sent: ${sent}, Failed: ${failed}, Enrolled: ${enrolled}`);
+  log.info({ adminId, sent, failed, enrolled }, "Drip campaign run complete");
   return { sent, failed, enrolled };
 }

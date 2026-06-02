@@ -30,6 +30,11 @@ export function auditLog(
 ) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     const start = Date.now();
+    // Check if json is already overridden to avoid double-wrapping
+    if ((res as any).__auditOverridden) {
+      next();
+      return;
+    }
     const originalJson = res.json.bind(res);
     const adminId = req.adminId || "anonymous";
 
@@ -83,6 +88,7 @@ export function auditLog(
         log.info({ audit: entry }, `[AUDIT] ${action} ${resource}`);
       }
 
+      (res as any).__auditOverridden = true;
       return originalJson(body);
     };
 

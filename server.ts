@@ -16,6 +16,7 @@ import { setupDatabase } from "./backend/lib/database.js";
 import { errorHandler } from "./backend/middleware/errorHandler.js";
 import { requestLogger } from "./backend/middleware/requestLogger.js";
 import { correlationId } from "./backend/middleware/correlationId.js";
+import { csrfProtection, cleanupExpiredTokens } from "./backend/middleware/csrf.js";
 import { processAllAdmins } from "./backend/services/proactiveEngine.js";
 import helmet from "helmet";
 import compression from "compression";
@@ -26,7 +27,40 @@ const __dirname = path.dirname(__filename);
 
 const log = createChildLogger("server");
 
+/**
+ * Validate required environment variables on startup
+ */
+function validateEnvironment() {
+  const required = ['DATABASE_URL', 'JWT_SECRET', 'GEMINI_API_KEY', 'ENCRYPTION_KEY'];
+  const missing = required.filter(v => !process.env[v]);
+  
+  if (missing.length > 0) {
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+  
+  // Check JWT_SECRET strength
+  const jwtSecret = process.env.JWT_SECRET || '';
+  if (jwtSecret.length < 32) {
+    throw new Error('JWT_SECRET must be at least 32 characters long');
+  }
+  
+  // Check production requirements
+  if (env.NODE_ENV === 'production') {
+    if (!env.APP_URL) {
+      throw new Error('APP_URL is required in production');
+    }
+    if (!env.APP_URL.startsWith('https://')) {
+      throw new Error('APP_URL must use HTTPS in production');
+    }
+  }
+  
+  log.info('Environment validation passed');
+}
+
 async function startServer() {
+  // Validate environment variables
+  validateEnvironment();
+  
   const app = express();
   const httpServer = createServer(app);
 
@@ -77,9 +111,19 @@ async function startServer() {
       : "*",
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-correlation-id"],
-    exposedHeaders: ["x-correlation-id"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-correlation-id", "x-csrf-token"],
+    exposedHeaders: ["x-correlation-id", "x-csrf-token"],
   }));
+
+  // HTTPS enforcement in production
+  if (env.NODE_ENV === "production") {
+    app.use((req: any, res, next) => {
+      if (req.header('x-forwarded-proto') !== 'https') {
+        return res.redirect(301, `https://${req.header('host')}${req.url}`);
+      }
+      next();
+    });
+  }
 
   // Observability middleware
   app.use(correlationId);
@@ -93,6 +137,17 @@ async function startServer() {
       defaultRateLimiter(req, res, next);
     }
   });
+
+  // CSRF Protection — skip for webhooks
+  app.use((req, res, next) => {
+    if (req.path === "/api/billing/webhook" || req.path === "/api/health") {
+      return next();
+    }
+    csrfProtection(req, res, next);
+  });
+
+  // Cleanup expired CSRF tokens periodically
+  cleanupExpiredTokens();
 
   // ===========================================================================
   // WEBSOCKET

@@ -1,8 +1,11 @@
 import { pool } from "./dbService.js";
 import { dbService } from "./dbService.js";
 import { baseTemplate, backupEmailContent } from "./emailTemplates.js";
+import { createChildLogger } from "../lib/logger.js";
 import fs from "fs";
 import path from "path";
+
+const log = createChildLogger("backup");
 
 const BACKUPS_DIR = path.resolve(process.cwd(), "backups");
 const MAX_BACKUPS = 7;
@@ -11,14 +14,10 @@ const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const BACKUP_BUCKET = process.env.BACKUP_BUCKET || "backups";
 
-function log(msg: string) {
-  console.log(`[BACKUP] ${msg}`);
-}
-
 function ensureBackupDir() {
   if (!fs.existsSync(BACKUPS_DIR)) {
     fs.mkdirSync(BACKUPS_DIR, { recursive: true });
-    log(`Created backups directory: ${BACKUPS_DIR}`);
+    log.info({ dir: BACKUPS_DIR }, "Created backups directory");
   }
 }
 
@@ -60,7 +59,7 @@ async function sendBackupNotification(adminId: string, manifest: any) {
     const smtpPass = superSettings.smtpPass;
 
     if (!notificationEmail || !smtpHost || !smtpUser || !smtpPass) {
-      log("Email notification skipped - SMTP or notification email not configured");
+      log.info({}, "Email notification skipped - SMTP or notification email not configured");
       return;
     }
 
@@ -78,15 +77,15 @@ async function sendBackupNotification(adminId: string, manifest: any) {
       subject: `Database Backup Complete - ${manifest.timestamp}`,
       html: baseTemplate(backupEmailContent(manifest), settings.storeName || "Sales Agent"),
     });
-    log(`Backup notification email sent to ${notificationEmail}`);
+    log.info({ email: notificationEmail }, "Backup notification email sent");
   } catch (err: any) {
-    log(`Failed to send backup notification email: ${err.message}`);
+    log.error({ err: err.message }, "Failed to send backup notification email");
   }
 }
 
 async function uploadToCloud(backupDir: string, timestamp: string, manifest: any): Promise<boolean> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-    log("Cloud backup skipped — SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set");
+    log.info({}, "Cloud backup skipped — cloud storage not configured");
     return false;
   }
   try {
@@ -96,7 +95,7 @@ async function uploadToCloud(backupDir: string, timestamp: string, manifest: any
     const { data: existingBucket } = await supabase.storage.getBucket(BACKUP_BUCKET);
     if (!existingBucket) {
       await supabase.storage.createBucket(BACKUP_BUCKET, { public: false });
-      log(`Created storage bucket: ${BACKUP_BUCKET}`);
+      log.info({ bucket: BACKUP_BUCKET }, "Created storage bucket");
     }
 
     const prefix = timestamp;
@@ -113,9 +112,9 @@ async function uploadToCloud(backupDir: string, timestamp: string, manifest: any
           upsert: true,
         });
       if (error) {
-        log(`Failed to upload ${file}: ${error.message}`);
+        log.warn({ file, err: error.message }, "Failed to upload file to cloud");
       } else {
-        log(`Uploaded ${file} to ${BACKUP_BUCKET}/${prefix}/${file}`);
+        log.info({ file, path: `${BACKUP_BUCKET}/${prefix}/${file}` }, "Uploaded file to cloud");
       }
     }
 
@@ -140,15 +139,15 @@ async function uploadToCloud(backupDir: string, timestamp: string, manifest: any
         if (oldFiles) {
           const paths = oldFiles.map((f: any) => `${oldest}/${f.name}`);
           await supabase.storage.from(BACKUP_BUCKET).remove(paths);
-          log(`Removed old cloud backup: ${oldest}`);
+          log.info({ backup: oldest }, "Removed old cloud backup");
         }
       }
     }
 
-    log(`Cloud backup complete: ${files.length + 1} files uploaded to ${BACKUP_BUCKET}`);
+    log.info({ fileCount: files.length + 1, bucket: BACKUP_BUCKET }, "Cloud backup complete");
     return true;
   } catch (err: any) {
-    log(`Cloud backup failed: ${err.message}`);
+    log.error({ err: err.message }, "Cloud backup failed");
     return false;
   }
 }
@@ -160,9 +159,9 @@ function cleanOldBackups(timestamp: string) {
     if (oldest.includes(timestamp)) continue;
     try {
       fs.rmSync(oldest, { recursive: true, force: true });
-      log(`Removed old backup: ${oldest}`);
+      log.info({ backup: oldest }, "Removed old backup");
     } catch (err: any) {
-      log(`Failed to remove old backup ${oldest}: ${err.message}`);
+      log.warn({ backup: oldest, err: err.message }, "Failed to remove old backup");
     }
   }
 }
@@ -176,7 +175,7 @@ export async function runBackup(adminId: string = "default-admin"): Promise<{ su
     fs.mkdirSync(backupDir, { recursive: true });
 
     const tableNames = await getTableNames();
-    log(`Found ${tableNames.length} tables to back up`);
+    log.info({ tableCount: tableNames.length }, "Found tables to back up");
 
     const tableExports: { name: string; rows: number; file: string }[] = [];
     let totalRows = 0;
@@ -188,9 +187,9 @@ export async function runBackup(adminId: string = "default-admin"): Promise<{ su
         fs.renameSync(filePath, destPath);
         tableExports.push({ name: tableName, rows, file: `${tableName}.json` });
         totalRows += rows;
-        log(`  Exported ${tableName}: ${rows} rows`);
+        log.info({ table: tableName, rows }, "Exported table");
       } catch (err: any) {
-        log(`  Failed to export ${tableName}: ${err.message}`);
+        log.warn({ table: tableName, err: err.message }, "Failed to export table");
       }
     }
 
@@ -209,13 +208,13 @@ export async function runBackup(adminId: string = "default-admin"): Promise<{ su
 
     const cloudResult = await uploadToCloud(backupDir, timestamp, manifest);
     if (cloudResult) {
-      log("Backup also uploaded to cloud storage");
+      log.info({}, "Backup also uploaded to cloud storage");
     }
 
-    log(`Backup complete: ${tableExports.length} tables, ${totalRows} total rows`);
+    log.info({ tableCount: tableExports.length, totalRows }, "Backup complete");
     return { success: true, tables: tableExports.length, totalRows };
   } catch (err: any) {
-    log(`Backup failed: ${err.message}`);
+    log.error({ err: err.message }, "Backup failed");
     return { success: false, tables: 0, totalRows: 0, error: err.message };
   }
 }
@@ -224,12 +223,12 @@ let scheduled = false;
 
 export function scheduleBackup(adminId: string = "default-admin") {
   if (scheduled) {
-    log("Backup scheduler already running");
+    log.info({}, "Backup scheduler already running");
     return;
   }
   scheduled = true;
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
-  log(`Backup scheduler started (interval: 24h)`);
+  log.info({ intervalMs: INTERVAL_MS }, "Backup scheduler started");
   runBackup(adminId);
   setInterval(() => runBackup(adminId), INTERVAL_MS);
 }

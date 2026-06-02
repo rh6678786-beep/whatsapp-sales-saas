@@ -1,9 +1,10 @@
 import Stripe from "stripe";
+import { env } from "../lib/env.js";
 import { createChildLogger } from "../lib/logger.js";
 
 const log = createChildLogger("stripe:service");
-const isMockMode = !process.env.STRIPE_SECRET_KEY;
-const stripe = isMockMode ? null : new Stripe(process.env.STRIPE_SECRET_KEY!);
+const isMockMode = !env.STRIPE_SECRET_KEY;
+const stripe = isMockMode ? null : new Stripe(env.STRIPE_SECRET_KEY);
 
 export interface PlanLimits {
   maxSessionsPerMonth: number;
@@ -99,7 +100,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       whiteLabel: false,
       paymentVerification: true,
     },
-    stripePriceId: process.env.STRIPE_STARTER_PRICE_ID || null,
+    stripePriceId: env.STRIPE_STARTER_PRICE_ID || null,
   },
   {
     id: "pro",
@@ -133,7 +134,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       whiteLabel: false,
       paymentVerification: true,
     },
-    stripePriceId: process.env.STRIPE_PROFESSIONAL_PRICE_ID || null,
+    stripePriceId: env.STRIPE_PROFESSIONAL_PRICE_ID || null,
   },
   {
     id: "enterprise",
@@ -167,7 +168,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       whiteLabel: true,
       paymentVerification: true,
     },
-    stripePriceId: process.env.STRIPE_BUSINESS_PRICE_ID || null,
+    stripePriceId: env.STRIPE_ENTERPRISE_PRICE_ID || null,
   },
 ];
 
@@ -331,7 +332,7 @@ export async function getSubscriptionStatus(
 
   // Trial check: If trial has expired, downgrade to Free
   if (sub.status === "trialing" && sub.trialEnd && new Date(sub.trialEnd) < new Date()) {
-    console.log(`[STRIPE][${adminId}] Trial expired. Downgrading to Free plan.`);
+    log.info({ adminId }, "Trial expired — downgrading to Free plan");
     sub = {
       planId: "free",
       status: "free" as const,
@@ -344,7 +345,7 @@ export async function getSubscriptionStatus(
 
   // Auto-expire check: If subscription has expired, revert to Free!
   if (sub.planId !== "free" && sub.status !== "trialing" && sub.currentPeriodEnd && new Date(sub.currentPeriodEnd) < new Date()) {
-    console.log(`[STRIPE][${adminId}] Subscription ${sub.planId} has expired. Auto-downgrading to Free plan.`);
+    log.info({ adminId, planId: sub.planId }, "Subscription expired — auto-downgrading to Free plan");
     sub = {
       planId: "free",
       status: "free" as const,

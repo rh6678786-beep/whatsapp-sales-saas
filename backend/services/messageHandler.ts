@@ -26,6 +26,13 @@ const simulatorCleanup = setInterval(() => {
     for (const key of keys) simulatorStore.delete(key);
   }
 }, 60000);
+
+// Cleanup intervals on process exit to prevent dangling handles
+const cleanupSimulatorInterval = () => clearInterval(simulatorCleanup);
+process.on("SIGTERM", cleanupSimulatorInterval);
+process.on("SIGINT", cleanupSimulatorInterval);
+process.on("SIGUSR2", cleanupSimulatorInterval);
+
 if (process.env.NODE_ENV === "test" || process.env.VITEST) {
   clearInterval(simulatorCleanup);
 }

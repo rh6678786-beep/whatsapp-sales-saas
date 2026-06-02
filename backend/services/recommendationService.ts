@@ -1,6 +1,9 @@
 import { dbService, pool } from "./dbService";
 import { generateEmbedding } from "./embeddingService";
 import { Product, Session } from "../../src/types";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("recommendation");
 
 export async function searchSimilarProducts(
   adminId: string,
@@ -49,7 +52,7 @@ export async function searchSimilarProducts(
 
     return matched.slice(0, topK);
   } catch (e) {
-    console.error("[RECOMMENDATION] Semantic search error:", (e as any)?.message);
+    log.error({ err: (e as any)?.message, adminId }, "Semantic search error");
     return fallbackProducts(adminId);
   }
 }
@@ -75,7 +78,7 @@ export async function getCrossSellProducts(
       .map(id => productMap.get(id))
       .filter((p): p is Product => !!p && (p.stock === undefined || p.stock > 0));
   } catch (e) {
-    console.error("[RECOMMENDATION] Cross-sell error:", (e as any)?.message);
+    log.error({ err: (e as any)?.message, adminId }, "Cross-sell error");
     return [];
   }
 }

@@ -21,6 +21,10 @@ async function compareOtp(otp: string, hash: string): Promise<boolean> {
   return bcrypt.compare(otp, hash);
 }
 
+async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, BCRYPT_ROUNDS);
+}
+
 const SMTP_CONFIG = {
   host: env.SMTP_HOST || "",
   port: env.SMTP_PORT || 587,
@@ -28,6 +32,35 @@ const SMTP_CONFIG = {
   pass: env.SMTP_PASS || "",
   from: env.SMTP_FROM || env.SMTP_USER || "noreply@saascloser.ai",
 };
+
+let smtpVerified = false;
+let smtpVerifying = false;
+
+async function verifySmtpConnection(): Promise<boolean> {
+  if (smtpVerified) return true;
+  if (smtpVerifying) return true; // Already in progress
+  if (!SMTP_CONFIG.host || !SMTP_CONFIG.user || !SMTP_CONFIG.pass) return false;
+  
+  smtpVerifying = true;
+  try {
+    const testTransporter = nodemailer.createTransport({
+      host: SMTP_CONFIG.host,
+      port: SMTP_CONFIG.port,
+      secure: SMTP_CONFIG.port === 465,
+      auth: { user: SMTP_CONFIG.user, pass: SMTP_CONFIG.pass },
+      connectionTimeout: 5000,
+    });
+    await testTransporter.verify();
+    smtpVerified = true;
+    log.info({ host: SMTP_CONFIG.host }, "SMTP connection verified");
+    return true;
+  } catch (err) {
+    log.warn({ err, host: SMTP_CONFIG.host }, "SMTP connection verification failed");
+    return false;
+  } finally {
+    smtpVerifying = false;
+  }
+}
 
 export async function sendOtp(
   email: string,
@@ -46,15 +79,25 @@ export async function sendOtp(
       };
     }
 
+    // Verify SMTP connection before proceeding (only once per process life)
+    const smtpOk = await verifySmtpConnection();
+    if (!smtpOk) {
+      return {
+        success: false,
+        error: "Email service is temporarily unavailable. Please try again later.",
+      };
+    }
+
     const otp = generateOtp();
     const otpHash = await hashOtp(otp);
+    const passwordHash = await hashPassword(data.password);
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
 
     await dbService.saveOtp(
       email,
       otpHash,
       data.adminId,
-      data.password,
+      passwordHash, // Store hashed password instead of plaintext
       data.storeName || null,
       expiresAt,
       data.phone || null

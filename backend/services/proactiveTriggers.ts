@@ -1,11 +1,10 @@
 import { dbService } from "./dbService.js";
 import { Session, SalesState } from "../../src/types";
-import { GoogleGenAI } from "@google/genai";
+import { getAIClient } from "./aiService.js";
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
+import { createChildLogger } from "../lib/logger.js";
 
-function getAIClient(apiKey: string) {
-  return new GoogleGenAI({ apiKey: apiKey || "" });
-}
+const log = createChildLogger("proactive:triggers");
 
 function isWithinHours(lastMessageAt: string, maxHours: number): boolean {
   const diff = Date.now() - new Date(lastMessageAt).getTime();
@@ -34,9 +33,9 @@ export async function processAbandonedCarts(
 
       let message = generateAbandonedCartFallback(session, productName, settings.storeName);
 
-      if (settings.geminiApiKey) {
-        try {
-          const ai = getAIClient(settings.geminiApiKey);
+      try {
+        const ai = await getAIClient(adminId);
+        if (ai) {
           const prompt = `You are a Pakistani business owner following up on an abandoned cart. Max 2 lines, Roman Urdu + English, warm and confident. Customer was interested in ${productName || "a product"} but didn't complete the purchase. Ask a natural engaging question. Never say "we miss you" or "we remembered you".`;
           const response = await ai.models.generateContent({
             model: settings.geminiModel || "gemini-2.0-flash",
@@ -44,7 +43,9 @@ export async function processAbandonedCarts(
             config: { systemInstruction: prompt, temperature: 0.8 },
           });
           if (response.text) message = response.text;
-        } catch {}
+        }
+      } catch (e) {
+        log.warn({ err: e, adminId, userId: session.userId }, "Failed to AI-generate abandoned cart message");
       }
 
       if (isWhatsAppReady(adminId)) {
@@ -60,12 +61,12 @@ export async function processAbandonedCarts(
       }
       await new Promise(r => setTimeout(r, 2000));
     } catch (e) {
-      console.error(`[ABANDONED_CART] Failed ${session.userId}:`, (e as any)?.message);
+      log.error({ err: e, adminId, userId: session.userId }, "Abandoned cart follow-up failed");
       failed++;
     }
   }
 
-  console.log(`[ABANDONED_CART][${adminId}] Sent: ${sent}, Failed: ${failed}, Eligible: ${eligible.length}`);
+  log.info({ adminId, sent, failed, eligible: eligible.length }, "Abandoned cart processing complete");
   return { sent, failed, sessions: eligible };
 }
 
@@ -114,9 +115,9 @@ export async function processPriceDropAlerts(
 
         let message = `Assalam o Alaikum! ${settings.storeName || "SalesForce AI"} se — ${productName} ${discountInfo} available hai! Limited time offer. Interested hain? 😊`;
 
-        if (settings.geminiApiKey) {
-          try {
-            const ai = getAIClient(settings.geminiApiKey);
+        try {
+          const ai = await getAIClient(adminId);
+          if (ai) {
             const prompt = `You are a Pakistani business owner notifying a customer about a price drop/deal. Max 2 lines, Roman Urdu + English, warm and exciting. Product: ${productName}, Deal: ${discountInfo}. Ask a natural question.`;
             const response = await ai.models.generateContent({
               model: settings.geminiModel || "gemini-2.0-flash",
@@ -124,7 +125,9 @@ export async function processPriceDropAlerts(
               config: { systemInstruction: prompt, temperature: 0.8 },
             });
             if (response.text) message = response.text;
-          } catch {}
+          }
+        } catch (e) {
+          log.warn({ err: e, adminId }, "Failed to AI-generate price drop message");
         }
 
         if (isWhatsAppReady(adminId)) {
@@ -135,12 +138,12 @@ export async function processPriceDropAlerts(
         }
         await new Promise(r => setTimeout(r, 2000));
       } catch (e) {
-        console.error(`[PRICE_DROP] Failed ${session.userId}:`, (e as any)?.message);
+        log.error({ err: e, adminId, userId: session.userId }, "Price drop alert failed");
         failed++;
       }
     }
   }
 
-  console.log(`[PRICE_DROP][${adminId}] Sent: ${sent}, Failed: ${failed}`);
+  log.info({ adminId, sent, failed }, "Price drop processing complete");
   return { sent, failed, sessions };
 }

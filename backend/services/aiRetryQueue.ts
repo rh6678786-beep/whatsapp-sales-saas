@@ -43,9 +43,12 @@ export function queueMessage(
   log.info({ adminId, userId }, "Queued message");
 }
 
+let retryProcessorInterval: ReturnType<typeof setInterval> | null = null;
+
 export function startAiRetryProcessor() {
+  if (retryProcessorInterval) return; // Already started
   log.info({ intervalMs: RETRY_INTERVAL_MS }, "Retry processor started");
-  setInterval(async () => {
+  retryProcessorInterval = setInterval(async () => {
     if (queue.size === 0) return;
     log.info({ queueSize: queue.size }, "Processing queued messages");
     for (const [key, item] of queue.entries()) {
@@ -113,4 +116,18 @@ export function startAiRetryProcessor() {
       }
     }
   }, RETRY_INTERVAL_MS);
+}
+
+// Cleanup on process exit
+const cleanupRetryProcessor = () => {
+  if (retryProcessorInterval) {
+    clearInterval(retryProcessorInterval);
+    retryProcessorInterval = null;
+  }
+};
+process.on("SIGTERM", cleanupRetryProcessor);
+process.on("SIGINT", cleanupRetryProcessor);
+
+if (process.env.VITEST || process.env.NODE_ENV === "test") {
+  cleanupRetryProcessor();
 }

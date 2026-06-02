@@ -1,6 +1,9 @@
 import nodemailer from "nodemailer";
 import { dbService } from "./dbService";
 import { Order } from "../../src/types";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("email");
 
 function extractPhone(userId: string): string {
   if (!userId) return "—";
@@ -172,7 +175,7 @@ export async function sendDailyOrderReport(adminId: string): Promise<{ sent: boo
 
     return { sent: true, orderCount: orders.length };
   } catch (error: any) {
-    console.error(`[EMAIL REPORT][${adminId}] Error:`, error.message);
+    log.error({ err: error.message, adminId }, "Daily order report error");
     return { sent: false, orderCount: 0, error: error.message };
   }
 }
@@ -222,11 +225,11 @@ export async function sendDailyReportToAllAdmins(): Promise<{ sent: number; fail
     const result = await sendDailyOrderReport(adminId);
     if (result.sent) {
       sent++;
-      console.log(`[EMAIL CRON][${adminId}] Report sent — ${result.orderCount} orders`);
+      log.info({ adminId, orderCount: result.orderCount }, "Report sent");
     } else {
       failed++;
       if (result.error) errors.push(`[${adminId}] ${result.error}`);
-      console.log(`[EMAIL CRON][${adminId}] Skipped — ${result.error || "unknown"}`);
+      log.info({ adminId, error: result.error || "unknown" }, "Report skipped");
     }
   }
 

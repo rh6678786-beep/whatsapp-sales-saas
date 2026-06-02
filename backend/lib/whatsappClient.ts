@@ -196,169 +196,205 @@ function killOrphanedChrome() {
   } catch {}
 }
 
-export function initializeWhatsAppClient(adminId: string) {
-  killOrphanedChrome();
-  const existing = instances.get(adminId);
-  if (existing) {
-    return existing.client;
-  }
-
-  if (!sessionsCleared) {
-    clearStaleSessions();
-    sessionsCleared = true;
-  }
-
-  const retries = retryCounters.get(adminId) || 0;
-  log.info({ adminId, retries }, "initializeWhatsAppClient called");
-
-  if (retries >= MAX_RETRIES) {
-    log.error({ adminId }, "Max retries reached — giving up");
-    return;
-  }
-
-  const authDir = `.wwebjs_auth_${adminId}`;
-  cleanupOrphanedBrowser(authDir);
-
-  const chromePaths = [
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-    `${process.env.LOCALAPPDATA || ""}\\Google\\Chrome\\Application\\chrome.exe`,
-    `${process.env.PROGRAMFILES || ""}\\Google\\Chrome\\Application\\chrome.exe`,
-  ];
-
-  const puppeteerConfig: any = {
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--disable-extensions",
-      "--no-first-run",
-      "--mute-audio",
-    ],
-  };
-
-  const execPath = chromePaths.find(p => fs.existsSync(p));
-  if (execPath) {
-    puppeteerConfig.executablePath = execPath;
-    log.info({ adminId, execPath }, "Using Chrome at");
-  }
-
-  const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: authDir }),
-    puppeteer: puppeteerConfig,
-    takeoverOnConflict: true,
-  });
-
-  const inst: WhatsAppInstance = {
-    client,
-    isReady: false,
-    latestQr: null,
-    reconnectAttempts: 0,
-  };
-  instances.set(adminId, inst);
-
-  client.on("qr", (qr) => {
-    log.info({ adminId }, "QR Code received");
-    inst.latestQr = qr;
-    inst.isReady = false;
-    persistStatus(adminId, { isReady: false, qr }).catch((err) => log.warn({ err, adminId }, "Status persist (QR) failed"));
-  });
-
-  client.on("authenticated", () => {
-    log.info({ adminId }, "Auth success");
-    inst.latestQr = null;
-    persistStatus(adminId, { isReady: false }).catch((err) => log.warn({ err, adminId }, "Status persist (auth) failed"));
-  });
-
-  client.on("ready", () => {
-    log.info({ adminId }, "READY");
-    inst.latestQr = null;
-    inst.isReady = true;
-    retryCounters.delete(adminId);
-    persistStatus(adminId, { isReady: true }).catch((err) => log.warn({ err, adminId }, "Status persist (ready) failed"));
-  });
-
-  client.on("message", async (msg) => {
-    if (!msg || msg.isStatus) return;
-    const chat = await msg.getChat().catch(() => null);
-    if (!chat || chat.isGroup) return;
-
-    const userId = msg.from;
-    const text = msg.body;
-
-    log.info({ adminId, userId, text: text.substring(0, 100) }, "Received message");
-
+/**
+ * Initialize WhatsApp client for an admin.
+ * Returns a Promise that resolves once the client has been created and .initialize() has been called.
+ * Note: "ready" state is async (QR scan required); the promise resolves when initialize() completes,
+ * not when the client is fully authenticated.
+ */
+export function initializeWhatsAppClient(adminId: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     try {
-      const result = await processIncomingMessage(adminId, userId, text || "");
-
-      if (result?.text) {
-        log.info({ adminId, userId, responseLen: result.text.length }, "AI response ready");
-        await sendWhatsAppMessage(adminId, userId, result.text);
-      } else if (result?.text === "") {
-        log.info({ adminId, userId }, "Handoff active — no auto-response sent");
-      } else {
-        log.info({ adminId, userId }, "No text response to send");
-      }
-
-      if (result?.images?.length) {
-        log.info({ adminId, userId, count: result.images.length }, "Sending images");
-        for (const img of result.images) {
-          const media = await MessageMedia.fromUrl(img).catch((err) => {
-            log.error({ err, adminId, img }, "Failed to load image");
-            return null;
-          });
-          if (media) {
-            await client.sendMessage(userId, media, { caption: result.text?.slice(0, 100) || "" });
-          }
-        }
-      }
-
-      if (result?.videos?.length) {
-        log.info({ adminId, userId, count: result.videos.length }, "Sending videos");
-        for (const vid of result.videos) {
-          const media = await MessageMedia.fromUrl(vid, { unsafeMime: true }).catch((err) => {
-            log.error({ err, adminId, vid }, "Failed to load video");
-            return null;
-          });
-          if (media) {
-            await client.sendMessage(userId, media, { sendVideoAsGif: false, caption: result.text?.slice(0, 100) || "" });
-          }
-        }
-      }
-    } catch (e: any) {
-      log.error({ err: e, adminId, userId }, "Error in message processing or sending");
-    }
-  });
-
-  client.on("disconnected", (reason: any) => {
-    log.info({ adminId, reason }, "Disconnected");
-    inst.isReady = false;
-    inst.latestQr = null;
-    persistStatus(adminId, { isReady: false }).catch((err) => log.warn({ err, adminId }, "Status persist (disconnect) failed"));
-    log.info({ adminId }, "Attempting auto-reconnect in 10 seconds");
-    setTimeout(() => {
-      if (!instances.get(adminId)?.isReady) {
-        log.info({ adminId }, "Auto-reconnecting");
-        instances.delete(adminId);
-        initializeWhatsAppClient(adminId);
-      }
-    }, 10000);
-  });
-
-  client.initialize().catch(e => {
-    log.error({ err: e, adminId }, "Client initialize failed");
-    instances.delete(adminId);
-    try { client.destroy(); } catch (_) {}
-    if ((e.message?.includes("EMAXCONNSESSIONS") || e.message?.includes("max clients")) && process.platform !== "win32") {
       killOrphanedChrome();
-    }
-    retryCounters.set(adminId, retries + 1);
-    const delay = Math.min(3000 * (retries + 1), 10000);
-    log.info({ adminId, retry: retries + 1, max: MAX_RETRIES, delay }, "Scheduling retry");
-    setTimeout(() => initializeWhatsAppClient(adminId), delay);
-  });
+      
+      const existing = instances.get(adminId);
+      if (existing) {
+        resolve();
+        return;
+      }
 
-  return client;
+      if (!sessionsCleared) {
+        clearStaleSessions();
+        sessionsCleared = true;
+      }
+
+      const retries = retryCounters.get(adminId) || 0;
+      log.info({ adminId, retries }, "initializeWhatsAppClient called");
+
+      if (retries >= MAX_RETRIES) {
+        log.error({ adminId }, "Max retries reached — giving up");
+        resolve(); // Resolve anyway (don't block the caller)
+        return;
+      }
+
+      const authDir = `.wwebjs_auth_${adminId}`;
+      cleanupOrphanedBrowser(authDir);
+
+      // Cross-platform Chrome/Chromium paths
+      // Priority: env var -> Windows -> Linux (Docker) -> macOS
+      const chromePaths = [
+        // ENV override
+        process.env.CHROME_PATH || "",
+        // Windows
+        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+        `${process.env.LOCALAPPDATA || ""}\\Google\\Chrome\\Application\\chrome.exe`,
+        `${process.env.PROGRAMFILES || ""}\\Google\\Chrome\\Application\\chrome.exe`,
+        // Linux (Docker, Ubuntu, etc.)
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/snap/bin/chromium",
+        // macOS
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        `${process.env.HOME || ""}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+      ].filter(Boolean);
+
+      const puppeteerConfig: any = {
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-extensions",
+          "--no-first-run",
+          "--mute-audio",
+        ],
+      };
+
+      const execPath = chromePaths.find(p => p && fs.existsSync(p));
+      if (execPath) {
+        puppeteerConfig.executablePath = execPath;
+        log.info({ adminId, execPath }, "Using Chrome at");
+      } else {
+        log.info({ adminId }, "No Chrome executable found at known paths — letting Puppeteer auto-detect");
+      }
+
+      const client = new Client({
+        authStrategy: new LocalAuth({ dataPath: authDir }),
+        puppeteer: puppeteerConfig,
+        takeoverOnConflict: true,
+      });
+
+      const inst: WhatsAppInstance = {
+        client,
+        isReady: false,
+        latestQr: null,
+        reconnectAttempts: 0,
+      };
+      instances.set(adminId, inst);
+
+      client.on("qr", (qr) => {
+        log.info({ adminId }, "QR Code received");
+        inst.latestQr = qr;
+        inst.isReady = false;
+        persistStatus(adminId, { isReady: false, qr }).catch((err) => log.warn({ err, adminId }, "Status persist (QR) failed"));
+      });
+
+      client.on("authenticated", () => {
+        log.info({ adminId }, "Auth success");
+        inst.latestQr = null;
+        persistStatus(adminId, { isReady: false }).catch((err) => log.warn({ err, adminId }, "Status persist (auth) failed"));
+      });
+
+      client.on("ready", () => {
+        log.info({ adminId }, "READY");
+        inst.latestQr = null;
+        inst.isReady = true;
+        retryCounters.delete(adminId);
+        persistStatus(adminId, { isReady: true }).catch((err) => log.warn({ err, adminId }, "Status persist (ready) failed"));
+      });
+
+      client.on("message", async (msg) => {
+        if (!msg || msg.isStatus) return;
+        const chat = await msg.getChat().catch(() => null);
+        if (!chat || chat.isGroup) return;
+
+        const userId = msg.from;
+        const text = msg.body;
+
+        log.info({ adminId, userId, text: text.substring(0, 100) }, "Received message");
+
+        try {
+          const result = await processIncomingMessage(adminId, userId, text || "");
+
+          if (result?.text) {
+            log.info({ adminId, userId, responseLen: result.text.length }, "AI response ready");
+            await sendWhatsAppMessage(adminId, userId, result.text);
+          } else if (result?.text === "") {
+            log.info({ adminId, userId }, "Handoff active — no auto-response sent");
+          } else {
+            log.info({ adminId, userId }, "No text response to send");
+          }
+
+          if (result?.images?.length) {
+            log.info({ adminId, userId, count: result.images.length }, "Sending images");
+            for (const img of result.images) {
+              const media = await MessageMedia.fromUrl(img).catch((err) => {
+                log.error({ err, adminId, img }, "Failed to load image");
+                return null;
+              });
+              if (media) {
+                await client.sendMessage(userId, media, { caption: result.text?.slice(0, 100) || "" });
+              }
+            }
+          }
+
+          if (result?.videos?.length) {
+            log.info({ adminId, userId, count: result.videos.length }, "Sending videos");
+            for (const vid of result.videos) {
+              const media = await MessageMedia.fromUrl(vid, { unsafeMime: true }).catch((err) => {
+                log.error({ err, adminId, vid }, "Failed to load video");
+                return null;
+              });
+              if (media) {
+                await client.sendMessage(userId, media, { sendVideoAsGif: false, caption: result.text?.slice(0, 100) || "" });
+              }
+            }
+          }
+        } catch (e: any) {
+          log.error({ err: e, adminId, userId }, "Error in message processing or sending");
+        }
+      });
+
+      client.on("disconnected", (reason: any) => {
+        log.info({ adminId, reason }, "Disconnected");
+        inst.isReady = false;
+        inst.latestQr = null;
+        persistStatus(adminId, { isReady: false }).catch((err) => log.warn({ err, adminId }, "Status persist (disconnect) failed"));
+        log.info({ adminId }, "Attempting auto-reconnect in 10 seconds");
+        setTimeout(() => {
+          if (!instances.get(adminId)?.isReady) {
+            log.info({ adminId }, "Auto-reconnecting");
+            instances.delete(adminId);
+            initializeWhatsAppClient(adminId);
+          }
+        }, 10000);
+      });
+
+      client.initialize()
+        .then(() => {
+          log.info({ adminId }, "Client initialized");
+          resolve();
+        })
+        .catch(e => {
+          log.error({ err: e, adminId }, "Client initialize failed");
+          instances.delete(adminId);
+          try { client.destroy(); } catch (_) {}
+          if ((e.message?.includes("max connections") || e.message?.includes("max clients") || e.message?.includes("EMAXCONNSESSIONS")) && process.platform !== "win32") {
+            killOrphanedChrome();
+          }
+          retryCounters.set(adminId, retries + 1);
+          const delay = Math.min(3000 * (retries + 1), 10000);
+          log.info({ adminId, retry: retries + 1, max: MAX_RETRIES, delay }, "Scheduling retry");
+          setTimeout(() => initializeWhatsAppClient(adminId), delay);
+          resolve(); // Don't reject - the retry handles it
+        });
+    } catch (outerErr: any) {
+      log.error({ err: outerErr, adminId }, "Unexpected error in initializeWhatsAppClient");
+      resolve(); // Never reject to prevent unhandled rejections
+    }
+  });
 }

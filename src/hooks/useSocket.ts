@@ -16,6 +16,7 @@ export function useSocket(adminId: string | null) {
     socketRef.current = socket;
 
     socket.on("connect_error", (err) => {
+      // WebSocket connection errors are expected during development and reconnection
       console.warn("[WS] Connection error:", err.message);
     });
 

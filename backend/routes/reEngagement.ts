@@ -1,6 +1,8 @@
 import { Router } from "express";
+import { z } from "zod";
 import { dbService } from "../services/dbService.js";
 import { getAdminId } from "../middleware/auth.js";
+import { validate } from "../middleware/validate.js";
 import { processReEngagement, previewReEngagement, findInactiveCustomers } from "../services/reEngagementService.js";
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
 
@@ -52,7 +54,11 @@ router.post("/re-engagement/preview", async (req, res) => {
   }
 });
 
-router.post("/re-engagement/schedule", async (req, res) => {
+router.post("/re-engagement/schedule", validate(z.object({
+  enabled: z.boolean().optional(),
+  message: z.string().max(1000).optional(),
+  interval: z.number().int().min(1).max(90).optional(),
+}).strict()), async (req, res) => {
   try {
     const adminId = getAdminId(req);
     await dbService.updateSettings(adminId, { reEngagement: req.body });

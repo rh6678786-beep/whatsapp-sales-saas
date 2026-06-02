@@ -11,6 +11,12 @@ const log = createChildLogger("route:upload");
 const router = Router();
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+
+// Ensure uploads directory exists
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
 const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
   filename: (_req, file, cb) => {

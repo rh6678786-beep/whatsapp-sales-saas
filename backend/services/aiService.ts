@@ -165,6 +165,12 @@ const AI_CLIENT_CLEANUP_INTERVAL = setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
+// Cleanup AI client cleanup interval on process exit
+const cleanupAiClientInterval = () => clearInterval(AI_CLIENT_CLEANUP_INTERVAL);
+process.on("SIGTERM", cleanupAiClientInterval);
+process.on("SIGINT", cleanupAiClientInterval);
+process.on("SIGUSR2", cleanupAiClientInterval);
+
 if (process.env.VITEST || process.env.NODE_ENV === "test") {
   clearInterval(AI_CLIENT_CLEANUP_INTERVAL);
 }
@@ -219,6 +225,20 @@ export async function getAIClient(adminId: string) {
 }
 
 const AI_TIMEOUT_MS = 60000;
+
+/**
+ * Sanitize user input before embedding in system prompts to prevent prompt injection.
+ * Strips control characters, trims whitespace, and limits line length.
+ */
+function sanitizeForPrompt(input: string): string {
+  // Strip control characters except newlines and tabs
+  let sanitized = input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  // Limit each line to 500 characters to prevent extremely long injection attempts
+  sanitized = sanitized.split('\n').map(line => line.slice(0, 500)).join('\n');
+  // Total max length
+  sanitized = sanitized.slice(0, 5000);
+  return sanitized;
+}
 
 function truncateString(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
@@ -445,7 +465,7 @@ ${history.slice(-5).map(m => `${m.role === 'user' ? '👤 Customer' : '🧑‍�
 
 ${memoryContextString}
 
-Customer's Last Message: "${lastMessage}"
+Customer's Last Message: "${sanitizeForPrompt(lastMessage)}"
 ${dealsSection}`;
 
   if (!ai) {

@@ -1,11 +1,10 @@
 import { dbService } from "./dbService";
 import { Session, SalesState, Message } from "../../src/types";
-import { GoogleGenAI } from "@google/genai";
+import { getAIClient } from "./aiService";
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
+import { createChildLogger } from "../lib/logger.js";
 
-function getAIClient(apiKey: string) {
-  return new GoogleGenAI({ apiKey: apiKey || "" });
-}
+const log = createChildLogger("re-engagement");
 
 function generateReEngagementPrompt(session: Session, history: Message[], products: any[]): string {
   const daysInactive = Math.floor((Date.now() - new Date(session.lastMessageAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -55,7 +54,7 @@ export async function findInactiveCustomers(adminId: string = 'default-admin'): 
   const settings = await dbService.getSettings(adminId);
   const cfg = settings.reEngagement || { enabled: true, inactiveDays: 7, maxReminders: 3, minLeadScore: 0 };
   if (!cfg.enabled) {
-    console.log("[RE-ENGAGEMENT] Disabled in settings");
+    log.info({ adminId }, "Re-engagement disabled in settings");
     return [];
   }
 
@@ -66,7 +65,7 @@ export async function findInactiveCustomers(adminId: string = 'default-admin'): 
     !s.isBlocked &&
     (s.metadata?.leadScore || 0) >= minScore
   );
-  console.log(`[RE-ENGAGEMENT][${adminId}] Found ${sessions.length} inactive, ${filtered.length} eligible (days: ${cfg.inactiveDays}, max reminders: ${cfg.maxReminders}, min score: ${cfg.minLeadScore})`);
+  log.info({ adminId, total: sessions.length, eligible: filtered.length, days: cfg.inactiveDays, maxReminders: cfg.maxReminders, minScore: cfg.minLeadScore }, "Re-engagement eligibility check");
   return filtered;
 }
 
@@ -81,8 +80,8 @@ export async function generateReEngagementMessage(adminId: string, userId: strin
   const prompt = generateReEngagementPrompt(session, history, products);
 
   try {
-    if (settings.geminiApiKey) {
-      const ai = getAIClient(settings.geminiApiKey);
+    const ai = await getAIClient(adminId);
+    if (ai) {
       const response = await ai.models.generateContent({
         model: settings.geminiModel || "gemini-2.0-flash",
         contents: [{ text: "Generate the re-engagement message now." }],
@@ -91,7 +90,7 @@ export async function generateReEngagementMessage(adminId: string, userId: strin
       return response.text || null;
     }
   } catch (e) {
-    console.error("[RE-ENGAGEMENT AI ERROR]", e);
+    log.error({ err: e, adminId }, "Re-engagement AI error");
   }
 
   return generateFallbackMessage(session, settings);
@@ -114,40 +113,65 @@ function generateFallbackMessage(session: Session, settings: any): string {
   return `Assalam o Alaikum! ${storeName} se — bahut arsa ho gaya, hope sab khairiyat se hai. Kuch naye options aaye hain jo aapko pasand aa sakte hain. Ek nazar dalen? 😊`;
 }
 
+/**
+ * Process re-engagement for inactive customers with concurrency limiting.
+ * Processes up to 5 customers in parallel to improve throughput
+ * while still respecting rate limits.
+ */
 export async function processReEngagement(adminId: string = 'default-admin'): Promise<{ sent: number; failed: number; messages: { userId: string; text: string }[] }> {
   const customers = await findInactiveCustomers(adminId);
   let sent = 0;
   let failed = 0;
   const messages: { userId: string; text: string }[] = [];
 
-  for (const session of customers) {
-    try {
-      const msg = await generateReEngagementMessage(adminId, session.userId);
-      if (!msg) { failed++; continue; }
+  const CONCURRENCY_LIMIT = 5;
+  
+  // Process customers in batches with limited concurrency
+  for (let i = 0; i < customers.length; i += CONCURRENCY_LIMIT) {
+    const batch = customers.slice(i, i + CONCURRENCY_LIMIT);
+    
+    const results = await Promise.allSettled(
+      batch.map(async (session) => {
+        const msg = await generateReEngagementMessage(adminId, session.userId);
+        if (!msg) return { userId: session.userId, success: false };
 
-      if (isWhatsAppReady(adminId)) {
-        await sendWhatsAppMessage(adminId, session.userId, msg);
+        if (isWhatsAppReady(adminId)) {
+          await sendWhatsAppMessage(adminId, session.userId, msg);
 
-        await dbService.updateSession(adminId, session.userId, {
-          remindersCount: (session.remindersCount || 0) + 1,
-          lastReminderAt: new Date().toISOString(),
-          metadata: {
-            ...session.metadata,
-            lastReEngagementMessage: msg,
-            lastReEngagementAt: new Date().toISOString()
-          }
-        } as any);
+          await dbService.updateSession(adminId, session.userId, {
+            remindersCount: (session.remindersCount || 0) + 1,
+            lastReminderAt: new Date().toISOString(),
+            metadata: {
+              ...session.metadata,
+              lastReEngagementMessage: msg,
+              lastReEngagementAt: new Date().toISOString()
+            }
+          } as any);
 
-        messages.push({ userId: session.userId, text: msg });
+          return { userId: session.userId, text: msg, success: true };
+        } else {
+          log.warn({ adminId, userId: session.userId }, "WhatsApp not ready, skipped");
+          return { userId: session.userId, success: false };
+        }
+      })
+    );
+
+    // Collect results
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value.success) {
+        messages.push({ userId: result.value.userId, text: result.value.text || "" });
         sent++;
       } else {
         failed++;
-        console.warn(`[RE-ENGAGEMENT] WhatsApp not ready for ${adminId}, skipped ${session.userId}`);
+        if (result.status === 'rejected') {
+          log.error({ err: result.reason, adminId }, "Re-engagement batch item failed");
+        }
       }
+    }
+
+    // Rate-limit delay between batches
+    if (i + CONCURRENCY_LIMIT < customers.length) {
       await new Promise(r => setTimeout(r, 2000));
-    } catch (e) {
-      console.error(`[RE-ENGAGEMENT FAILED] ${session.userId}:`, e);
-      failed++;
     }
   }
 

@@ -1,5 +1,8 @@
 import { pool } from "./dbService";
 import { getAIClient } from "./aiService";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("ai:embedding");
 
 const EMBEDDING_MODEL = "text-embedding-004";
 const SIMILARITY_THRESHOLD = 0.7;
@@ -39,7 +42,7 @@ export async function generateEmbedding(text: string, adminId: string): Promise<
 
     return embedding;
   } catch (err: any) {
-    console.warn(`[EMBEDDING] Failed to generate embedding for admin ${adminId}:`, err.message);
+    log.warn({ err: err.message, adminId }, "Failed to generate embedding");
     return null;
   }
 }
@@ -61,7 +64,7 @@ export async function storeEmbedding(
       [adminId, sessionId, messageId, role, text, vectorStr]
     );
   } catch (err: any) {
-    console.warn(`[EMBEDDING] Failed to store embedding:`, err.message);
+    log.warn({ err: err.message }, "Failed to store embedding");
   }
 }
 
@@ -89,7 +92,7 @@ export async function searchSimilar(
       similarity: parseFloat(row.similarity),
     }));
   } catch (err: any) {
-    console.warn(`[EMBEDDING] Search failed:`, err.message);
+    log.warn({ err: err.message, adminId }, "Embedding search failed");
     return [];
   }
 }
@@ -117,7 +120,7 @@ export async function getSessionEmbeddings(
       createdAt: row.created_at,
     }));
   } catch (err: any) {
-    console.warn(`[EMBEDDING] Failed to get session embeddings:`, err.message);
+    log.warn({ err: err.message, adminId }, "Failed to get session embeddings");
     return [];
   }
 }

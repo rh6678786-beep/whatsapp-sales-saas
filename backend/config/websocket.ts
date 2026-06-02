@@ -2,6 +2,7 @@ import { Server as HttpServer } from "http";
 import { Server, Socket } from "socket.io";
 import { verifyToken } from "../services/authService.js";
 import { verifyTeamToken } from "../services/teamAuthService.js";
+import { env } from "../lib/env.js";
 import { createChildLogger } from "../lib/logger.js";
 
 const log = createChildLogger("websocket");
@@ -15,8 +16,8 @@ export function getIO(): Server | null {
 export function setupWebSocket(server: HttpServer): Server {
   io = new Server(server, {
     cors: {
-      origin: process.env.NODE_ENV === "production"
-        ? process.env.APP_URL || false
+      origin: env.NODE_ENV === "production"
+        ? env.APP_URL || false
         : "*",
       methods: ["GET", "POST"],
       credentials: true,

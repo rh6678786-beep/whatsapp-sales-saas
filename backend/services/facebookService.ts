@@ -1,6 +1,9 @@
 import axios from "axios";
 import { dbService } from "./dbService";
 import { processIncomingMessage } from "./messageHandler";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("facebook");
 
 const FB_GRAPH_URL = "https://graph.facebook.com/v18.0";
 
@@ -18,7 +21,7 @@ export async function sendFacebookMessage(psid: string, text: string, adminId: s
     });
     return true;
   } catch (error: any) {
-    console.error("[FB SEND ERROR]", error?.response?.data || error?.message);
+    log.error({ err: error?.response?.data || error?.message }, "Facebook send error");
     return false;
   }
 }
@@ -31,10 +34,10 @@ export async function handleFacebookIncoming(senderPsid: string, messageText: st
       await sendFacebookMessage(senderPsid, result.text);
     }
     if (result?.shouldBlockUser) {
-      console.log(`[FB BLOCK] ${senderPsid}`);
+      log.info({ psid: senderPsid }, "Facebook block");
     }
   } catch (error: any) {
-    console.error("[FB HANDLER ERROR]", error?.message);
+    log.error({ err: error?.message }, "Facebook handler error");
     await sendFacebookMessage(senderPsid, "Maazrat, momentarily ek issue aa gaya — please apna message wapis bhejein ya 2 minute baad dobara try karein. Shukriya 😊");
   }
 }
@@ -44,7 +47,7 @@ export async function verifyFacebookWebhook(mode: string, token: string, challen
   const expectedToken = settings.facebook?.verifyToken;
 
   if (mode === "subscribe" && token === expectedToken) {
-    console.log("[FB WEBHOOK] Verified successfully");
+    log.info({}, "Facebook webhook verified successfully");
     return challenge;
   }
   return null;
@@ -56,7 +59,7 @@ export async function testFacebookConnection(pageId: string, accessToken: string
       params: { access_token: accessToken, fields: "name,id" }
     });
     if (res.data?.id) {
-      console.log(`[FB TEST] Connected to page: ${res.data.name}`);
+      log.info({ page: res.data.name }, "Facebook connection test successful");
       return { success: true };
     }
     return { success: false, error: "Invalid response from Facebook" };

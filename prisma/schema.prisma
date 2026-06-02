@@ -1,10 +1,10 @@
 datasource db {
   provider = "postgresql"
-
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider = "prisma-client"
+  output   = "../generated"
 }
 
 // 1. Admin/Store Configuration Table

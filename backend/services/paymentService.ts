@@ -122,7 +122,22 @@ export async function updatePaymentConfig(
   }
 
   const paymentConfig = await _getConfig(adminId);
-  const merged = { ...paymentConfig, ...config };
+  
+  // Deep merge: preserve existing sub-object fields when only partial updates are sent
+  const merged: PaymentConfig = {
+    jazzCash: {
+      ...paymentConfig.jazzCash,
+      ...(config.jazzCash || {}),
+    },
+    easyPaisa: {
+      ...paymentConfig.easyPaisa,
+      ...(config.easyPaisa || {}),
+    },
+    bankTransfer: {
+      ...paymentConfig.bankTransfer,
+      ...(config.bankTransfer || {}),
+    },
+  };
 
   // Validate inner fields
   if (merged.jazzCash) {
@@ -144,7 +159,7 @@ export async function updatePaymentConfig(
     }
   }
 
-  // Encrypt before storing
+  // Encrypt before storing (preserves existing encrypted passwords if not overwritten)
   const encrypted = encryptConfigPasswords(merged);
   await dbService.updateSettings(adminId, { paymentConfig: encrypted as any });
   log.info({ adminId }, "Payment config updated");

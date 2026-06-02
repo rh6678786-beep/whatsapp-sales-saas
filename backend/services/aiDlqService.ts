@@ -1,4 +1,7 @@
 import { prisma } from '../services/dbService.js';
+import { createChildLogger } from '../lib/logger.js';
+
+const log = createChildLogger('ai:dlq');
 
 /**
  * Log a failed AI request to the Dead Letter Queue.
@@ -11,6 +14,11 @@ export async function logAiDlq(
   errorMessage: string
 ): Promise<void> {
   try {
+    // Verify prisma is available and has aiDlq model
+    if (!prisma || !prisma.aiDlq) {
+      log.warn({ adminId, operation }, 'AI DLQ table not available, skipping');
+      return;
+    }
     await prisma.aiDlq.create({
       data: {
         adminId,
@@ -19,8 +27,8 @@ export async function logAiDlq(
         errorMessage,
       },
     });
-    console.info(`[AI DLQ] Logged failed operation '${operation}' for admin ${adminId}`);
+    log.info({ adminId, operation, errorMessage: errorMessage.substring(0, 100) }, 'Logged failed AI request to DLQ');
   } catch (e) {
-    console.error('[AI DLQ] Failed to log dead letter entry:', e);
+    log.error({ err: e, adminId, operation }, 'Failed to log dead letter entry');
   }
 }

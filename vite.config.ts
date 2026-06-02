@@ -59,7 +59,16 @@ export default defineConfig(({ mode }) => {
           'node-fetch',
           'undici'
         ],
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-charts': ['recharts', 'd3'],
+            'vendor-ui': ['lucide-react', 'motion', 'react-hot-toast'],
+            'vendor-socket': ['socket.io-client'],
+          },
+        },
       },
+      chunkSizeWarningLimit: 600,
     },
     server: {
       allowedHosts: true,

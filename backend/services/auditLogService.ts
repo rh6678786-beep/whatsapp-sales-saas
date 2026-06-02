@@ -1,4 +1,7 @@
 import { pool } from "./dbService.js";
+import { createChildLogger } from "../lib/logger.js";
+
+const log = createChildLogger("audit");
 
 export async function logAction(
   adminId: string,
@@ -16,7 +19,7 @@ export async function logAction(
       [adminId, memberId || null, action, entity, entityId || null, details ? JSON.stringify(details) : null, ipAddress || null]
     );
   } catch (err: any) {
-    console.error(`[AUDIT_LOG] Failed to log action:`, err.message);
+    log.error({ err: err.message, adminId, action, entity }, "Failed to log action");
   }
 }
 
