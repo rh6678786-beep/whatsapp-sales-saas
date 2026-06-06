@@ -65,6 +65,7 @@ export interface Session {
   remindersCount: number;
   lastReminderAt?: string;
   isBlocked?: boolean;
+  birthday?: string;
   metadata?: SessionMetadata;
 }
 

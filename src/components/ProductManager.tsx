@@ -220,8 +220,8 @@ export default function ProductManager() {
       setPage(1);
       fetchProducts(1);
     } catch (err: any) {
-      console.error('Failed to save product:', err);
       const serverError = err?.response?.data?.error || err?.message || "Unknown error";
+      toast.error(`Failed to save: ${serverError}`);
       setError(`Failed to save: ${serverError}`);
     }
   };
@@ -234,7 +234,7 @@ export default function ProductManager() {
         setPage(nextPage);
         fetchProducts(nextPage);
       } catch (err) {
-        console.error('Failed to delete product:', err);
+        toast.error('Failed to delete product');
       }
     }
   };
@@ -248,7 +248,7 @@ export default function ProductManager() {
       setPage(nextPage);
       fetchProducts(nextPage);
     } catch (err) {
-      console.error('Failed to batch delete products:', err);
+      toast.error('Failed to delete selected products');
     }
   };
 
@@ -595,7 +595,7 @@ export default function ProductManager() {
                             const urls: string[] = res.data.urls;
                             setFormData(prev => ({...prev, images: [...(prev.images || []), ...urls]}));
                           } catch (err: any) {
-                            console.error("Upload failed:", err);
+                            toast.error("Image upload failed");
                           }
                         }}
                       />
@@ -635,7 +635,7 @@ export default function ProductManager() {
                             const urls: string[] = res.data.urls;
                             setFormData(prev => ({...prev, videos: urls}));
                           } catch (err: any) {
-                            console.error("Upload failed:", err);
+                            toast.error("Video upload failed");
                           }
                         }}
                       />

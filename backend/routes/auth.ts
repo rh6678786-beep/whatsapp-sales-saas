@@ -142,17 +142,24 @@ router.post("/auth/login", authRateLimiter, async (req, res) => {
     const hash = await dbService.getAdminPasswordHash(adminId);
 
     if (!hash) {
-      // Constant-time dummy comparison to prevent timing enumeration
-      await comparePassword(password, "$2b$12$" + "a".repeat(53));
-      recordFailedAttempt(adminId);
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
-
-    const valid = await comparePassword(password, hash);
-
-    if (!valid) {
-      recordFailedAttempt(adminId);
-      return res.status(401).json({ error: "Invalid credentials" });
+      // Fallback: check against ADMIN_PASSWORD from .env
+      const envPassword = process.env.ADMIN_PASSWORD || '';
+      if (envPassword && password === envPassword) {
+        // Hash the env password and save it for future logins
+        const hashed = await hashPassword(password);
+        await dbService.registerAdmin(adminId, hashed);
+      } else {
+        // Constant-time dummy comparison to prevent timing enumeration
+        await comparePassword(password, "$2b$12$" + "a".repeat(53));
+        recordFailedAttempt(adminId);
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+    } else {
+      const valid = await comparePassword(password, hash);
+      if (!valid) {
+        recordFailedAttempt(adminId);
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
     }
 
     clearLockout(adminId);

@@ -1,8 +1,33 @@
 import { Request, Response, NextFunction } from "express";
 import { AppError } from "../lib/errors.js";
 import { createChildLogger } from "../lib/logger.js";
+import { recoverPool, isDbConnected } from "../services/dbService.js";
 
 const log = createChildLogger("error-handler");
+
+/**
+ * Check if an error is a database connection error.
+ */
+function isDbConnectionError(err: Error): boolean {
+  const msg = err.message?.toLowerCase() || "";
+  const name = err.name || "";
+  return (
+    name.includes("PrismaClient") && (
+      msg.includes("can't reach database") ||
+      msg.includes("connection terminated") ||
+      msg.includes("connection refused") ||
+      msg.includes("connection reset") ||
+      msg.includes("econnreset") ||
+      msg.includes("econnrefused") ||
+      msg.includes("etimedout") ||
+      msg.includes("timed out") ||
+      msg.includes("server closed the connection") ||
+      msg.includes("socket closed") ||
+      msg.includes("client has encountered a connection error") ||
+      msg.includes("could not connect")
+    )
+  );
+}
 
 export function errorHandler(
   err: Error,
@@ -33,10 +58,29 @@ export function errorHandler(
     return;
   }
 
-  // Prisma errors
+  // Prisma connection errors — auto-recover without server restart
+  if (isDbConnectionError(err)) {
+    log.warn({ err, path: req.path }, "Database connection error — triggering auto-recovery");
+    // Fire-and-forget pool recovery
+    recoverPool().catch(() => {});
+    res.status(503).json({
+      error: "Database temporarily unavailable. Retrying connection automatically. Please try your request again.",
+      code: "DB_CONNECTION_ERROR",
+      retryable: true,
+    });
+    return;
+  }
+
+  // Other Prisma errors
   if (err.name === "PrismaClientKnownRequestError") {
     log.warn({ err }, "Prisma request error");
     res.status(400).json({ error: "Database operation failed", code: "DB_ERROR" });
+    return;
+  }
+
+  if (err.name === "PrismaClientValidationError") {
+    log.warn({ err }, "Prisma validation error");
+    res.status(400).json({ error: "Invalid database query", code: "DB_VALIDATION_ERROR" });
     return;
   }
 

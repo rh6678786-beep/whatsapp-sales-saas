@@ -23,6 +23,39 @@ router.get("/supervisor/sessions", async (req, res) => {
   }
 });
 
+router.get("/supervisor/handoffs", async (req, res) => {
+  try {
+    const adminId = getAdminId(req);
+    const sessions = await dbService.getRecentSessions(adminId, 200);
+    // Filter to only sessions with active handoff (handoffTriggered=true, not yet resumed)
+    const handoffSessions = sessions.filter((s: any) => {
+      const meta = s.metadata || {};
+      return meta.handoffTriggered === true && !meta.aiResumed;
+    });
+    const enriched = await Promise.all(handoffSessions.map(async (s: any) => {
+      const msgs = await dbService.getMessages(adminId, s.id);
+      const lastMsg = msgs[msgs.length - 1];
+      return {
+        id: s.id,
+        userId: s.userId,
+        state: s.state,
+        lastMessageAt: s.lastMessageAt,
+        lastMessage: lastMsg?.text || "",
+        messages: msgs.slice(-5),
+        handoffReason: s.metadata?.handoffReason || "",
+        handoffSummary: s.metadata?.handoffSummary || null,
+        handoffTriggeredAt: s.metadata?.handoffTriggeredAt || s.lastMessageAt,
+      };
+    }));
+    res.json({
+      handoffs: enriched,
+      total: enriched.length,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/supervisor/send", async (req, res) => {
   try {
     const adminId = getAdminId(req);

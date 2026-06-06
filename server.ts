@@ -1,4 +1,3 @@
-import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -18,14 +17,28 @@ import { requestLogger } from "./backend/middleware/requestLogger.js";
 import { correlationId } from "./backend/middleware/correlationId.js";
 import { csrfProtection, cleanupExpiredTokens } from "./backend/middleware/csrf.js";
 import { processAllAdmins } from "./backend/services/proactiveEngine.js";
+import { prisma } from "./backend/services/dbService.js";
 import helmet from "helmet";
 import compression from "compression";
 import cors from "cors";
+
+import * as Sentry from "@sentry/node";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const log = createChildLogger("server");
+
+// Initialize Sentry if DSN is configured
+if (env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: env.SENTRY_DSN,
+    environment: env.NODE_ENV,
+    tracesSampleRate: env.NODE_ENV === "production" ? 0.1 : 0.5,
+    integrations: [Sentry.requestDataIntegration()],
+  });
+  log.info("Sentry error tracking initialized");
+}
 
 /**
  * Validate required environment variables on startup
@@ -68,10 +81,15 @@ async function startServer() {
   // STANDARD MIDDLEWARE
   // ===========================================================================
   // Raw body is captured via express.json verify callback for Stripe webhook
+  // Helper to match paths across API versions (/api/* and /api/v1/*)
+  const matchesApiPath = (url: string, path: string): boolean => {
+    return url === path || url === path.replace('/api', '/api/v1');
+  };
+
   app.use(express.json({
-    limit: "10mb",
+    limit: "1mb",
     verify: (req: any, _res, buf: Buffer) => {
-      if (req.originalUrl === "/api/billing/webhook") {
+      if (req.originalUrl && matchesApiPath(req.originalUrl, "/api/billing/webhook")) {
         req.rawBody = buf;
       }
     },
@@ -129,20 +147,30 @@ async function startServer() {
   app.use(correlationId);
   app.use(requestLogger);
 
-  // Rate limiting — skip for webhook and health endpoints
+  // Rate limiting — skip for webhook and health endpoints (supports /api and /api/v1)
   app.use((req, res, next) => {
-    if (req.path === "/api/billing/webhook" || req.path === "/api/health") {
+    const path = req.path;
+    if (matchesApiPath(path, "/api/billing/webhook") || matchesApiPath(path, "/api/health")) {
       next();
     } else {
       defaultRateLimiter(req, res, next);
     }
   });
 
-  // CSRF Protection — skip for webhooks
+  // CSRF Protection — skip for:
+  // 1. Webhooks & health
+  // 2. JWT-authenticated API calls (SPA sends Bearer token, not cookies, so CSRF is mitigated)
+  // 3. Unauthenticated auth routes (no JWT yet, e.g. login, signup)
+  // Supports both /api and /api/v1 prefixes
   app.use((req, res, next) => {
-    if (req.path === "/api/billing/webhook" || req.path === "/api/health") {
-      return next();
-    }
+    const path = req.path;
+    const skipPaths = ["/api/billing/webhook", "/api/health", "/api/whatsapp/webhook"];
+    if (skipPaths.some(p => matchesApiPath(path, p))) return next();
+    // JWT-authenticated requests are safe from CSRF (browser can't auto-send Authorization header)
+    if (req.headers.authorization?.startsWith('Bearer ')) return next();
+    // Unauthenticated auth routes (no JWT available)
+    if (path.startsWith('/api/auth/') || path.startsWith('/api/v1/auth/') ||
+        path.startsWith('/api/team/') || path.startsWith('/api/v1/team/')) return next();
     csrfProtection(req, res, next);
   });
 
@@ -171,7 +199,7 @@ async function startServer() {
   }
 
   // ===========================================================================
-  // ROUTES
+  // ROUTES — Import all route modules
   // ===========================================================================
   const { default: authRoutes } = await import("./backend/routes/auth.js");
   const { default: igOauthRoutes } = await import("./backend/routes/igOauth.js");
@@ -204,38 +232,40 @@ async function startServer() {
   const { default: activityRoutes } = await import("./backend/routes/activity.js");
   const { default: twoFactorRoutes } = await import("./backend/routes/twoFactor.js");
   const { default: statsRoutes } = await import("./backend/routes/stats.js");
+  const { default: monitoringRoutes } = await import("./backend/routes/monitoring.js");
+  const { default: purchaseRoutes } = await import("./backend/routes/purchases.js");
 
-  app.use("/api", authRoutes);
-  app.use("/api", igOauthRoutes);
-  app.use("/api", whatsappRoutes);
-  app.use("/api", sessionsRoutes);
-  app.use("/api", productsRoutes);
-  app.use("/api", settingsRoutes);
-  app.use("/api", billingRoutes);
-  app.use("/api", analyticsRoutes);
-  app.use("/api", campaignsRoutes);
-  app.use("/api", supervisorRoutes);
-  app.use("/api", publishRoutes);
-  app.use("/api", telegramRoutes);
-  app.use("/api", reEngagementRoutes);
-  app.use("/api", proactiveRoutes);
-  app.use("/api", dealsRoutes);
-  app.use("/api", broadcastRoutes);
-  app.use("/api", uploadRoutes);
-  app.use("/api", healthRoutes);
-  app.use("/api", superAdminRoutes);
-  app.use("/api", emailReportRoutes);
-  app.use("/api", paymentRoutes);
-  app.use("/api", orderTrackingRoutes);
-  app.use("/api", reportRoutes);
-  app.use("/api", seedRoutes);
-  app.use("/api", teamRoutes);
-  app.use("/api", teamAuthRoutes);
-  app.use("/api", auditRoutes);
-  app.use("/api", bulkImportRoutes);
-  app.use("/api", activityRoutes);
-  app.use("/api", twoFactorRoutes);
-  app.use("/api", statsRoutes);
+  // Collect all route modules for dual mounting
+  const routeModules = [
+    authRoutes, igOauthRoutes, whatsappRoutes, sessionsRoutes,
+    productsRoutes, settingsRoutes, billingRoutes, analyticsRoutes,
+    campaignsRoutes, supervisorRoutes, publishRoutes, telegramRoutes,
+    reEngagementRoutes, proactiveRoutes, dealsRoutes, broadcastRoutes,
+    uploadRoutes, healthRoutes, superAdminRoutes, emailReportRoutes,
+    paymentRoutes, orderTrackingRoutes, reportRoutes, seedRoutes,
+    teamRoutes, teamAuthRoutes, auditRoutes, bulkImportRoutes,
+    activityRoutes, twoFactorRoutes, statsRoutes, monitoringRoutes,
+    purchaseRoutes,
+  ];
+
+  const API_PREFIXES = ["/api", "/api/v1"];
+  for (const prefix of API_PREFIXES) {
+    for (const mod of routeModules) {
+      app.use(prefix, mod);
+    }
+  }
+
+  // ===========================================================================
+  // 404 HANDLER — Unknown API routes (for both /api and /api/v1)
+  // ===========================================================================
+  for (const prefix of ["/api", "/api/v1"]) {
+    app.use(prefix, (_req, res) => {
+      res.status(404).json({
+        error: "Route not found",
+        code: "NOT_FOUND",
+      });
+    });
+  }
 
   // ===========================================================================
   // VITE / SPA
@@ -256,6 +286,11 @@ async function startServer() {
   // ===========================================================================
   // ERROR HANDLER (must be last)
   // ===========================================================================
+  // Sentry error handler wraps our error handler when DSN is configured
+  // The order matters: Sentry catches the error, then our handler formats the response
+  if (env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+  }
   app.use(errorHandler);
 
   // ===========================================================================
@@ -299,6 +334,9 @@ async function startServer() {
 
       // Disconnect Redis
       await disconnectRedis();
+
+      // Disconnect Prisma (database)
+      await prisma.$disconnect();
 
       log.info("Shutdown complete");
       process.exit(0);

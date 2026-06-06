@@ -3,7 +3,9 @@ import { dbService } from "../services/dbService.js";
 import { getAdminId } from "../middleware/auth.js";
 import { sendWhatsAppMessage, isWhatsAppReady } from "../lib/whatsappClient.js";
 import { Order } from "../../src/types.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:orderTracking");
 const router = Router();
 
 router.get("/orders", async (req, res) => {
@@ -65,15 +67,15 @@ router.post("/orders/:id/tracking", async (req, res) => {
       };
 
       await dbService.createOrder(adminId, existingOrder);
-      console.log(`[DB][${adminId}] Successfully created/updated order with tracking: ${req.params.id}`);
+      log.info({ adminId, orderId: req.params.id }, "Order tracking created/updated");
     } catch (orderErr: any) {
-      console.warn(`[DB_WARNING][${adminId}] Could not sync order tracking:`, orderErr.message);
+      log.warn({ err: orderErr, adminId, orderId: req.params.id }, "Could not sync order tracking");
     }
 
     res.json({ success: true });
   } catch (error: any) {
-    const safeId = req.headers["x-admin-id"] as string || "unknown";
-    console.error(`[ORDER_TRACKING_ERROR][${safeId}]`, error.message);
+    const adminId = getAdminId(req);
+    log.error({ err: error, adminId, orderId: req.params.id }, "Order tracking failed");
     res.status(500).json({ error: error.message });
   }
 });

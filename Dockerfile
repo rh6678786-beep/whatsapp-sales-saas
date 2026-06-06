@@ -27,23 +27,13 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Install chromium + puppeteer dependencies
-RUN apk add --no-cache \
-  chromium \
-  nss \
-  freetype \
-  freetype-dev \
-  harfbuzz \
-  ca-certificates \
-  ttf-freefont \
-  curl
+# Install curl for health checks
+RUN apk add --no-cache curl ca-certificates
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV NODE_ENV=production
 
 # Copy only production dependencies
@@ -63,7 +53,6 @@ COPY --from=builder /app/tsconfig.json ./
 
 # Create uploads directory and set permissions
 RUN mkdir -p /app/uploads && \
-    mkdir -p /app/.wwebjs_auth && \
     chown -R nodejs:nodejs /app
 
 # Switch to non-root user

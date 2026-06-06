@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { SalesState, Session, formatUserId } from '../types';
 import { CheckCircle, XCircle, Eye, CornerUpLeft, Truck, Send, Loader2, Calendar, DollarSign, CreditCard, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -30,7 +31,7 @@ export default function OrderVerifier() {
       
       setSessions(verificationSessions);
     } catch (err) {
-      console.error('Failed to fetch sessions:', err);
+      toast.error('Failed to load sessions');
     }
   };
 
@@ -45,7 +46,7 @@ export default function OrderVerifier() {
       await axios.patch(`/api/sessions/${userId}`, { state: SalesState.VERIFIED });
       fetchSessions();
     } catch (e) {
-      console.error("Failed to verify payment:", e);
+      toast.error("Failed to verify payment");
     }
   };
 
@@ -70,7 +71,7 @@ export default function OrderVerifier() {
       await axios.patch(`/api/sessions/${userId}`, { state: SalesState.ORDER_CONFIRMED });
       fetchSessions();
     } catch (e) {
-      console.error("Failed to confirm order:", e);
+      toast.error("Failed to confirm order");
     }
   };
 
@@ -81,7 +82,7 @@ export default function OrderVerifier() {
       const res = await axios.post('/api/payment/analyze-screenshot', { imageBase64 });
       setAnalysis(res.data);
     } catch (err) {
-      console.error('Analysis failed:', err);
+      toast.error('Screenshot analysis failed');
       setAnalysis({ error: 'Failed to analyze' });
     } finally {
       setAnalyzing(false);

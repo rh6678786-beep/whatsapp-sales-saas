@@ -1,9 +1,39 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { ShoppingCart, Package, TrendingUp, Calendar, Clock, Banknote, Filter } from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import { ShoppingCart, Package, TrendingUp, Calendar, Clock, Banknote, Filter, Truck } from 'lucide-react';
 import { PageSkeleton, CardSkeleton, ChartSkeleton } from './Skeleton';
 import { motion } from 'motion/react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, LabelList } from 'recharts';
+
+interface PurchaseStats {
+  totalCost: number;
+  count: number;
+  thisMonth: number;
+}
+
+function PurchaseCard({ label, value, subtitle, icon: Icon, color, bg }: {
+  label: string; value: string; subtitle: string; icon: any; color: string; bg: string;
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`border border-zinc-200 dark:border-zinc-800/50 p-8 rounded-[32px] shadow-sm hover:shadow-xl dark:shadow-none transition-all group ${bg}`}
+    >
+      <div className="flex justify-between items-start">
+        <div className="space-y-3">
+          <p className={`text-xs font-black uppercase tracking-wider ${color}`}>{label}</p>
+          <p className={`text-3xl font-black ${color}`}>{value}</p>
+          <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">{subtitle}</p>
+        </div>
+        <div className={`p-3 rounded-2xl ${color} bg-white dark:bg-zinc-800 border border-zinc-100 dark:border-zinc-700 shadow-sm`}>
+          <Icon className="w-5 h-5" />
+        </div>
+      </div>
+    </motion.div>
+  );
+}
 
 interface StatsData {
   activeUsers: number;
@@ -42,6 +72,7 @@ export default function Dashboard() {
   const [activity, setActivity] = useState<ActivityData | null>(null);
   const [activityLoading, setActivityLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'1W' | '1M' | '6M' | '1Y'>('1W');
+  const [purchaseStats, setPurchaseStats] = useState<PurchaseStats | null>(null);
 
   const chartData = useMemo(() => {
     if (!stats) return [];
@@ -78,7 +109,7 @@ export default function Dashboard() {
       try {
         const { data } = await axios.get('/api/stats');
         setStats(data);
-      } catch (err) { console.error('Failed to fetch dashboard data:', err); }
+      } catch (err) { toast.error('Failed to load dashboard data'); }
     };
     const fetchFunnel = async () => {
       try {
@@ -90,11 +121,18 @@ export default function Dashboard() {
       try {
         const { data } = await axios.get('/api/activity');
         setActivity(data);
-      } catch (err) { console.error('Failed to fetch activity:', err); }
+      } catch (err) { toast.error('Failed to load activity feed'); }
       finally { setActivityLoading(false); }
     };
     fetchData();
     fetchFunnel();
+    const fetchPurchaseStats = async () => {
+      try {
+        const { data } = await axios.get('/api/purchases/stats');
+        setPurchaseStats(data);
+      } catch {}
+    };
+    fetchPurchaseStats();
     fetchActivity();
     const i1 = setInterval(fetchData, 60000);
     const i2 = setInterval(fetchFunnel, 120000);
@@ -209,6 +247,34 @@ export default function Dashboard() {
             </motion.div>
           ))}
         </div>
+      </div>
+
+      {/* Purchase Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <PurchaseCard
+          label="Total Inventory Investment"
+          value={`Rs. ${(purchaseStats?.totalCost || 0).toLocaleString()}`}
+          subtitle={`${purchaseStats?.count || 0} total purchases`}
+          icon={Truck}
+          color="text-violet-600 dark:text-violet-400"
+          bg="bg-violet-50/30 dark:bg-violet-900/10"
+        />
+        <PurchaseCard
+          label="This Month Purchases"
+          value={`Rs. ${(purchaseStats?.thisMonth || 0).toLocaleString()}`}
+          subtitle="Current month spending"
+          icon={Truck}
+          color="text-orange-600 dark:text-orange-400"
+          bg="bg-orange-50/30 dark:bg-orange-900/10"
+        />
+        <PurchaseCard
+          label="Avg Purchase Value"
+          value={`Rs. ${(purchaseStats?.count ? Math.round((purchaseStats.totalCost || 0) / purchaseStats.count) : 0).toLocaleString()}`}
+          subtitle="Per purchase average"
+          icon={TrendingUp}
+          color="text-cyan-600 dark:text-cyan-400"
+          bg="bg-cyan-50/30 dark:bg-cyan-900/10"
+        />
       </div>
 
       {/* Conversion Funnel */}

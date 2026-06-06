@@ -52,13 +52,27 @@ jobs:
 
   deploy:
     needs: [docker]
+    if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - name: Deploy to production server
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: IMAGE_TAG
+          script: |
+            cd /app/saascloser
+            docker compose pull app
+            docker compose up -d app
+            docker image prune -f
+            echo "Deployed $IMAGE_TAG"
+        env:
+          IMAGE_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      - name: Notify deployment status
+        if: always()
         run: |
-          echo "Deployment triggered — image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha"
-          echo ""
-          echo "Recommended deploy targets:"
-          echo "  • SSH pull + restart: ssh user@host 'docker compose pull && docker compose up -d'"
-          echo "  • Kubernetes: kubectl set image deployment/app app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          echo "  • Cloud Run: gcloud run deploy saascloser --image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          echo "::notice ::Deployment ${{ job.status }} — image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ github.sha }}"
+          echo "Deployment ${{ job.status }} on $(date -u)"

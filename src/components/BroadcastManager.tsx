@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { Megaphone, Users, Send, AlertTriangle, Eye, Zap, Sparkles, Clock, CheckCircle2, Lock } from 'lucide-react';
 import { Skeleton } from './Skeleton';
 import { motion, AnimatePresence } from 'motion/react';
@@ -57,7 +58,7 @@ export default function BroadcastManager({ onNavigate }: { onNavigate?: (tab: st
       const res = await axios.get('/api/stats');
       setCustomerCount(res.data.activeUsers || 0);
     } catch (err) {
-      console.error('Failed to fetch stats:', err);
+      toast.error('Failed to load stats');
     }
   };
 

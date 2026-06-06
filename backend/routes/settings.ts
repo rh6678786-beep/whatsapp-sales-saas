@@ -25,22 +25,22 @@ router.post("/settings", validate(updateSettingsSchema), async (req, res) => {
     const adminId = getAdminId(req);
     const body = { ...req.body };
 
-    console.log(`[SETTINGS][${adminId}] Settings change requested. Keys updating: ${Object.keys(body).join(', ')}`);
+    log.info({ adminId, keys: Object.keys(body) }, "Settings change requested");
 
     if (body.adminPassword) {
-      console.log(`[SETTINGS][${adminId}] Password modification requested. Securing hash...`);
+      log.info({ adminId }, "Password change requested — hashing");
       const hashed = await hashPassword(body.adminPassword);
       await dbService.registerAdmin(adminId, hashed);
       delete body.adminPassword;
     }
 
     const settings = await dbService.updateSettings(adminId, body);
-    console.log(`[SETTINGS][${adminId}] Configuration changes merged and saved successfully.`);
+    log.info({ adminId }, "Settings saved successfully");
     logAction(adminId, "update", "settings", undefined, { keys: Object.keys(body) }, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     res.json(settings);
   } catch (error: any) {
-    const safeId = req.headers["x-admin-id"] as string || "unknown";
-    console.error(`[SETTINGS_ERROR][${safeId}] Failed to write configurations:`, error.message);
+    const adminId = getAdminId(req);
+    log.error({ err: error, adminId }, "Failed to update settings");
     res.status(500).json({ error: "Failed to update settings" });
   }
 });
@@ -93,7 +93,7 @@ router.post("/settings/plan", async (req, res) => {
       currentPeriodEnd: periodEnd.toISOString(),
     };
     await dbService.updateSubscription(adminId, updated);
-    console.log(`[SETTINGS][${adminId}] Plan updated to: ${plan}`);
+    log.info({ adminId, plan }, "Plan updated");
     res.json({ success: true, plan });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

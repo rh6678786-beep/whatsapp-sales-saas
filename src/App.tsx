@@ -21,6 +21,7 @@ const queryClient = new QueryClient({
 import { LayoutDashboard, Package, ShieldCheck, Settings, LogOut, Menu, X, Smartphone, MessageSquare, Sun, Moon, Megaphone, FileText, ChevronDown, ChevronRight, CreditCard, Share2, Users, Store, Shield, DollarSign, HelpCircle, Tag, ShoppingBag, Zap, History, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
+import { cachedGetInterceptor, cacheResponseInterceptor, clearCache } from './lib/apiCache';
 import { SalesState, Session } from './types';
 
 // Security: Use a more secure token storage pattern
@@ -51,6 +52,22 @@ axios.interceptors.request.use((config) => {
     config.headers.Authorization = `Bearer ${token}`;
   }
   config.headers['x-correlation-id'] = crypto.randomUUID?.() || Date.now().toString(36);
+
+  // Check cache for GET requests — skip the request if we have a fresh response
+  if (config.method?.toLowerCase() === 'get' && config.url) {
+    const cached = cachedGetInterceptor(config.url);
+    if (cached !== undefined) {
+      // Return a cached response — axios adapter will see this as a resolved promise
+      config.adapter = () => Promise.resolve({
+        data: cached,
+        status: 200,
+        statusText: 'OK (cached)',
+        headers: { 'content-type': 'application/json' },
+        config,
+      });
+    }
+  }
+
   return config;
 });
 
@@ -80,9 +97,24 @@ const BulkImport = React.lazy(() => import('./components/BulkImport'));
 
 const TabFallback = () => <div className="flex items-center justify-center h-64 text-zinc-400 text-sm font-medium">Loading...</div>;
 
-// Response interceptor — security-hardened
+// Response interceptor — cache successful GETs + invalidate on writes + security-hardened
 axios.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const method = response.config.method?.toLowerCase();
+    const url = response.config.url || '';
+
+    // Cache successful GET responses for certain endpoints
+    if (method === 'get') {
+      cacheResponseInterceptor(url, response.data);
+    }
+
+    // Invalidate settings cache when settings are saved — next GET will fetch fresh data
+    if ((method === 'post' || method === 'put' || method === 'patch') && url.includes('/api/settings')) {
+      clearCache('/api/settings');
+    }
+
+    return response;
+  },
   (error) => {
     if (error.response?.status === 401) {
       clearAuth();
@@ -213,7 +245,7 @@ export default function App() {
       } catch { }
     };
 
-    const interval = setInterval(checkPendingPayments, 10000);
+    const interval = setInterval(checkPendingPayments, 30000);
     checkPendingPayments();
     return () => clearInterval(interval);
   }, [isAuthenticated]);

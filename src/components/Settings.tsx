@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'react-hot-toast';
 import { Settings as SettingsIcon, Key, Smartphone, Zap, Save, CheckCircle, Shield, Lock, Eye, EyeOff, User, Sparkles, Banknote, RefreshCw, Loader2, X, ArrowRight, Store, Upload, ChevronDown, Mail, Send, Clock, Globe, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
@@ -95,7 +96,7 @@ export default function Settings() {
       const res = await axios.get('/api/settings');
       setSettings(prev => ({ ...prev, ...res.data, language: res.data.language || 'ur' }));
     } catch (err) {
-      console.error('Failed to fetch settings:', err);
+      toast.error('Failed to load settings');
     }
   };
 
@@ -104,7 +105,7 @@ export default function Settings() {
       const res = await axios.get('/api/email-report/settings');
       setEmailSettings(prev => ({ ...prev, ...res.data }));
     } catch (err) {
-      console.error('Failed to fetch email settings:', err);
+      toast.error('Failed to load email settings');
     }
   };
 
@@ -155,8 +156,15 @@ export default function Settings() {
         setSaved(false);
         window.location.reload();
       }, 1500);
-    } catch (err) {
-      alert('Failed to save settings');
+    } catch (err: any) {
+      const data = err?.response?.data;
+      let msg = data?.error || err?.message || 'Failed to save settings';
+      // Append field-level validation details for better debugging
+      if (data?.details && Array.isArray(data.details)) {
+        const fieldErrors = data.details.map((d: any) => `${d.field}: ${d.message}`).join('\n');
+        msg += `\n\n${fieldErrors}`;
+      }
+      alert('Settings error:\n' + msg);
     } finally {
       setSaving(false);
     }

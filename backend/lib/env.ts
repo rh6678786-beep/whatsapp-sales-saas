@@ -1,4 +1,5 @@
-import "dotenv/config";
+import { config } from "dotenv";
+config({ override: true });
 
 export interface EnvConfig {
   NODE_ENV: "development" | "production" | "test";
@@ -24,6 +25,7 @@ export interface EnvConfig {
   FACEBOOK_CLIENT_ID: string;
   FACEBOOK_CLIENT_SECRET: string;
   ENCRYPTION_KEY: string;
+  SENTRY_DSN: string;
 }
 
 function requireEnv(key: string): string {
@@ -76,6 +78,7 @@ export function loadEnv(): EnvConfig {
     FACEBOOK_CLIENT_ID: optionalEnv("FACEBOOK_CLIENT_ID", ""),
     FACEBOOK_CLIENT_SECRET: optionalEnv("FACEBOOK_CLIENT_SECRET", ""),
     ENCRYPTION_KEY: requireEnv("ENCRYPTION_KEY"),
+    SENTRY_DSN: optionalEnv("SENTRY_DSN", ""),
   };
 
   // Validate NODE_TLS_REJECT_UNAUTHORIZED is not 0 in production
@@ -99,8 +102,22 @@ export function loadEnv(): EnvConfig {
   }
 
   // Validate encryption key
-  if (isProduction && config.ENCRYPTION_KEY.length < 32) {
-    throw new Error("ENCRYPTION_KEY must be at least 32 characters in production. Generate with: openssl rand -hex 32");
+  if (isProduction) {
+    const isHex = /^[0-9a-fA-F]+$/.test(config.ENCRYPTION_KEY);
+    const isBase64 = /^[a-zA-Z0-9+/]*={0,2}$/.test(config.ENCRYPTION_KEY);
+    
+    let keyBytes = 0;
+    if (isHex && config.ENCRYPTION_KEY.length >= 64) {
+      keyBytes = config.ENCRYPTION_KEY.length / 2;
+    } else if (isBase64) {
+      keyBytes = Buffer.from(config.ENCRYPTION_KEY, 'base64').length;
+    } else {
+      keyBytes = Buffer.from(config.ENCRYPTION_KEY, 'utf-8').length;
+    }
+
+    if (keyBytes < 32) {
+      throw new Error("ENCRYPTION_KEY must represent at least 32 bytes (256 bits) of key material in production.");
+    }
   }
 
   _env = config;

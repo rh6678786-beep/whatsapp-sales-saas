@@ -13,6 +13,53 @@ import { createChildLogger } from "../lib/logger.js";
 
 const log = createChildLogger("message-handler");
 
+// ---- Customer opt-out keywords (multi-language) ----
+const OPT_OUT_KEYWORDS = [
+  "stop", "unsubscribe", "opt out", "opt-out", "block", "exit",
+  "leave", "remove", "delete", "cancel", "enough", "no more",
+  "dont send", "don't send", "stop it", "quit",
+  // Urdu/Roman Urdu
+  "band karo", "band kar", "nahi chahiye", "mujhe nahi chahiye",
+  "bas karo", "bas kar", "ruko", "rukoo", "chhoro",
+  "nahi bhejo", "mat bhejo", "bhejna band kar",
+  // Hindi
+  "band karo", "nahi chahiye", "mujhe nahi chahiye", "bas karo",
+  // Arabic
+  "توقف", "إلغاء الاشتراك", "لا ترسل", "كفى", "انسحاب",
+  // Bengali
+  "বন্ধ করুন", "পাঠাবেন না", "চাই না", "আমার চাই না",
+  // Generic patterns (catch-all for "not interested" type messages)
+  "not intrested", "not interested", "nahi", "no thanks",
+  "no thank you", "not now", "bothering", "spam", "harass",
+];
+
+// ---- Re-subscribe keywords ----
+const RESUBSCRIBE_KEYWORDS = [
+  "start", "subscribe", "opt in", "opt-in", "yes", "i want",
+  "mujhe chahiye", "fir se", "dobara", "phir se", "haan",
+  // Arabic
+  "اشتراك", "بدء", "نعم",
+  // Bengali
+  "আবার পাঠান", "সাবস্ক্রাইব", "হ্যাঁ",
+];
+
+function checkOptOut(text: string): string | null {
+  const lower = text.toLowerCase().trim();
+  if (lower.length < 3) return null;
+  for (const keyword of OPT_OUT_KEYWORDS) {
+    if (lower.includes(keyword)) {
+      return keyword;
+    }
+  }
+  return null;
+}
+
+function checkResubscribe(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  if (lower.length < 3) return false;
+  return RESUBSCRIBE_KEYWORDS.some(k => lower.includes(k));
+}
+
 interface SimulatorData {
   session: Session;
   messages: Message[];
@@ -91,7 +138,22 @@ export async function processIncomingMessage(
       }
       history = await dbService.getMessages(adminId, userId);
     }
-    
+
+    // 2a. Opt-out / Block Check — customer can unsubscribe anytime
+    if (!isSimulator && session) {
+      if (session.isBlocked) {
+        // If already blocked, check for resubscribe
+        if (checkResubscribe(body)) {
+          await dbService.updateSession(adminId, userId, { isBlocked: false });
+          log.info({ adminId, userId }, "Customer resubscribed — unblocked");
+        } else {
+          // Blocked user sent a message — silently ignore
+          log.info({ adminId, userId }, "Blocked user sent message — ignored");
+          return { text: "", images: [], videos: [] };
+        }
+      }
+    }
+
     // 2. Context & Settings
     const products = await dbService.getAllProducts(adminId);
     const settings = await dbService.getSettings(adminId);
@@ -120,6 +182,21 @@ export async function processIncomingMessage(
 
     if (!isSimulator) {
       await dbService.addMessage(adminId, userId, userMsg);
+    }
+
+    // 4b. Opt-out Check — after saving user message (admin can see why they left)
+    if (!isSimulator && session) {
+      const optOutKeyword = checkOptOut(body);
+      if (optOutKeyword) {
+        await dbService.updateSession(adminId, userId, { isBlocked: true });
+        log.info({ adminId, userId, keyword: optOutKeyword }, "Customer opted out — blocked");
+        return {
+          text: body.length < 15
+            ? "You've been unsubscribed. You won't receive any more messages from us. If you change your mind, just say 'start' anytime. 👍"
+            : "Got it, we won't bother you again. If you ever want to come back, just say 'start'. 👍",
+          shouldBlockUser: false,
+        };
+      }
     }
 
     // 5. Handoff Check — skip AI if handoff is active
@@ -196,9 +273,28 @@ export async function processIncomingMessage(
           handoffTriggered: true,
           handoffReason: escalation.reason,
           handoffSummary: escalation.summary || null,
+          handoffTriggeredAt: new Date().toISOString(),
           aiPaused: true,
         };
         await dbService.updateSession(adminId, userId, { metadata: session.metadata } as any);
+
+        // Send real-time WebSocket notification to admin dashboard
+        try {
+          const { emitToAdmin } = await import("../config/websocket.js");
+          emitToAdmin(adminId, "handoff:new", {
+            sessionId: userId,
+            reason: escalation.reason,
+            triggerSource: escalation.triggerSource,
+            summary: escalation.summary || null,
+            userId: session.userId,
+            state: session.state,
+            lastMessageAt: session.lastMessageAt,
+            handoffTriggeredAt: new Date().toISOString(),
+          });
+          log.info({ adminId, userId, reason: escalation.reason }, "WebSocket handoff notification sent");
+        } catch (wsErr) {
+          log.warn({ err: (wsErr as Error).message, adminId, userId }, "Failed to send WebSocket handoff notification");
+        }
       }
     }
 

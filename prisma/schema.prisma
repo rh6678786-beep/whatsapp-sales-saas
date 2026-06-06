@@ -9,48 +9,50 @@ generator client {
 
 // 1. Admin/Store Configuration Table
 model Admin {
-  adminId            String    @id
+  adminId            String  @id
   passwordHash       String?
-  storeName          String    @default("SalesForce AI")
-  geminiApiKey       String    @default("")
-  geminiModel        String    @default("gemini-2.0-flash")
-  jazzCashNumber     String    @default("0300-1234567")
-  advanceAmount      Int       @default(300)
-  businessLogo       String    @default("")
-  language           String    @default("ur")
-  email              String    @default("")
-  phone              String    @default("")
-  address            String    @default("")
-  verifiedEmail      String?  @unique
-  onboardingComplete Boolean   @default(true)
-  paymentConfig      Json?     // Stores custom gateway settings
-  reEngagement       Json?     // Stores automated follow-up rules
+  storeName          String  @default("SalesForce AI")
+  geminiApiKey       String  @default("")
+  geminiModel        String  @default("gemini-2.0-flash")
+  jazzCashNumber     String  @default("0300-1234567")
+  advanceAmount      Int     @default(300)
+  businessLogo       String  @default("")
+  language           String  @default("ur")
+  email              String  @default("")
+  phone              String  @default("")
+  address            String  @default("")
+  verifiedEmail      String? @unique
+  onboardingComplete Boolean @default(true)
+  paymentConfig      Json? // Stores custom gateway settings
+  reEngagement       Json? // Stores automated follow-up rules
   facebook           Json?
   instagram          Json?
   telegram           Json?
-  notificationEmail  String    @default("")
+  notificationEmail  String  @default("")
 
   // SMTP config (stored at super admin level)
-  smtpHost           String    @default("")
-  smtpPort           Int       @default(587)
-  smtpUser           String    @default("")
-  smtpPass           String    @default("")
-  emailReportsEnabled Boolean  @default(true)
+  smtpHost            String  @default("")
+  smtpPort            Int     @default(587)
+  smtpUser            String  @default("")
+  smtpPass            String  @default("")
+  emailReportsEnabled Boolean @default(true)
 
   // Extra settings catch-all for dynamic keys (tiktok, aiLearningPatterns, etc.)
   subscription       Json?
   tiktok             Json?
   aiLearningPatterns Json?
-  memoryConfig       Json?    // RAG memory settings: { enabled, summarizationThreshold, embeddingEnabled }
-  proactiveConfig    Json?    // Proactive triggers config: { enabled, maxPerDay, abandonedCart, priceDrop, birthday, reEngagement }
-  teamMembers        Json?    // Array of TeamMember objects
-  
+  memoryConfig       Json? // RAG memory settings: { enabled, summarizationThreshold, embeddingEnabled }
+  proactiveConfig    Json? // Proactive triggers config: { enabled, maxPerDay, abandonedCart, priceDrop, birthday, reEngagement }
+  teamMembers        Json? // Array of TeamMember objects
+  whatsappCloud      Json? // WhatsApp Cloud API config: { accessToken, phoneNumberId, wabaId, verifyToken, isActive }
+
   // Relations
-  products           Product[]
-  sessions           Session[]
-  orders             Order[]
-  deals              Deal[]
-  dripCampaigns      DripCampaign[]
+  products      Product[]
+  sessions      Session[]
+  orders        Order[]
+  deals         Deal[]
+  dripCampaigns DripCampaign[]
+  purchases     Purchase[]
 }
 
 // 2. Products Catalog Table
@@ -64,32 +66,44 @@ model Product {
   images    String[] // Postgres array of image URLs
   videos    String[] // Postgres array of video URLs
   stock     Int      @default(10) // 0 = out of stock, >0 = available
-  
-  deleted   Boolean  @default(false)
+
+  deleted   Boolean   @default(false)
   deletedAt DateTime?
 
   // Relations
-  admin     Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([adminId, deleted])
+  @@index([id, adminId])
+  @@index([adminId, name])
+  @@index([adminId, stock])
 }
 
 // 3. Customer Chat Sessions Table
 model Session {
   adminId           String
-  id                String    // Session ID (usually customer's phone number)
-  userId            String    // Customer's raw phone identifier
-  state             String    // e.g. "NEW", "PAYMENT_AWAITING", "ORDER_CONFIRMED"
+  id                String // Session ID (usually customer's phone number)
+  userId            String // Customer's raw phone identifier
+  state             String // e.g. "NEW", "PAYMENT_AWAITING", "ORDER_CONFIRMED"
   selectedProductId String?
   lastMessageAt     DateTime  @default(now())
   remindersCount    Int       @default(0)
   lastReminderAt    DateTime?
   isBlocked         Boolean   @default(false)
-  metadata          Json?     // Stores dynamic buying signals, screenshots, addresses
+  birthday          String?  // Extracted from metadata for indexed queries
+  metadata          Json? // Stores dynamic buying signals, screenshots, addresses
 
   // Relations
-  admin             Admin     @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
-  messages          Message[]
+  admin    Admin     @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  messages Message[]
 
   @@id([adminId, id])
+  @@index([adminId, state])
+  @@index([adminId, lastMessageAt])
+  @@index([adminId, isBlocked])
+  @@index([adminId, state, isBlocked, lastMessageAt])
+  @@index([adminId, birthday])
 }
 
 // 4. Chat Messages History Table
@@ -97,14 +111,17 @@ model Message {
   id        String   @id @default(uuid())
   adminId   String
   sessionId String
-  role      String   // "user" or "model"
+  role      String // "user" or "model"
   text      String   @db.Text
   timestamp DateTime @default(now())
   imageUrl  String?
   videoUrl  String?
 
   // Relations
-  session   Session  @relation(fields: [adminId, sessionId], references: [adminId, id], onDelete: Cascade)
+  session Session @relation(fields: [adminId, sessionId], references: [adminId, id], onDelete: Cascade)
+
+  @@index([adminId, sessionId, timestamp])
+  @@index([adminId, timestamp])
 }
 
 // 5. OTP Store for Email Verification
@@ -117,45 +134,55 @@ model OtpStore {
   phone     String?
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 // 7. Deals / Offers Table
 model Deal {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   adminId       String
   title         String
-  description   String   @default("")
+  description   String    @default("")
   productIds    String[] // Postgres array of product IDs for combo deals
-  discountPrice Float?   // Optional discount price (null = no discount, just a combo offer)
-  image         String   @default("")
+  discountPrice Float? // Optional discount price (null = no discount, just a combo offer)
+  image         String    @default("")
   startDate     DateTime?
   endDate       DateTime?
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  deleted       Boolean  @default(false)
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  deleted       Boolean   @default(false)
   deletedAt     DateTime?
 
-  admin         Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([adminId, isActive])
+  @@index([adminId, createdAt])
+  @@index([adminId, deleted])
+  @@index([adminId, endDate])
 }
 
 // 9. AI Cost Tracking Log
 model AiDlq {
-  id          Int      @id @default(autoincrement())
-  adminId     String
-  operation   String
-  payload     Json
+  id           Int      @id @default(autoincrement())
+  adminId      String
+  operation    String
+  payload      Json
   errorMessage String?
-  createdAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([adminId, createdAt])
 }
 
 model AiCostLog {
-  id          Int      @id @default(autoincrement()) @map("id")
-  adminId     String   @map("admin_id")
-  model       String   @default("gemini-2.0-flash") @map("model")
-  inputTokens Int      @default(0) @map("input_tokens")
-  outputTokens Int     @default(0) @map("output_tokens")
-  cost        Float    @default(0) @map("cost")
-  createdAt   DateTime @default(now()) @map("created_at")
+  id           Int      @id @default(autoincrement()) @map("id")
+  adminId      String   @map("admin_id")
+  model        String   @default("gemini-2.0-flash") @map("model")
+  inputTokens  Int      @default(0) @map("input_tokens")
+  outputTokens Int      @default(0) @map("output_tokens")
+  cost         Float    @default(0) @map("cost")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([adminId, createdAt])
   @@map("ai_cost_log")
@@ -165,14 +192,16 @@ model DripCampaign {
   id        String   @id @default(uuid())
   adminId   String
   name      String
-  trigger   String   // "abandoned_cart", "new_session", "post_purchase", "manual"
+  trigger   String // "abandoned_cart", "new_session", "post_purchase", "manual"
   enabled   Boolean  @default(true)
-  steps     Json     // [{ day: 1, message: "Hi!", aiGenerated: false }, ...]
+  steps     Json // [{ day: 1, message: "Hi!", aiGenerated: false }, ...]
   createdAt DateTime @default(now())
 
-  admin     Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
 
   @@unique([adminId, name])
+  @@index([adminId, enabled])
+  @@index([adminId, trigger])
 }
 
 // 0. Audit Log Table
@@ -191,17 +220,36 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// 6. Confirmed Orders Table
+// 6. Inventory Purchase Records Table
+model Purchase {
+  id           String   @id @default(uuid())
+  adminId      String
+  productName  String   // Name of purchased product (preserved even if product deleted)
+  productId    String?  // Optional link to product record
+  quantity     Int      @default(1)
+  pricePerUnit Float    // Price paid per unit
+  totalCost    Float    // Total cost = pricePerUnit * quantity
+  supplier     String   @default("")  // Supplier name
+  note         String   @default("")  // Additional notes
+  createdAt    DateTime @default(now())
+
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+
+  @@index([adminId, createdAt])
+  @@index([adminId])
+}
+
+// 7. Confirmed Orders Table
 model Order {
   adminId              String
-  id                   String   // Matches Session ID / Customer ID
+  id                   String // Matches Session ID / Customer ID
   userId               String
   productId            String
-  status               String   // "PENDING", "VERIFIED", "SHIPPED", "DELIVERED"
+  status               String // "PENDING", "VERIFIED", "SHIPPED", "DELIVERED"
   paymentScreenshotUrl String?
   shippingAddress      String?
-  customerName         String?  // Customer's full name
-  customerPhone        String?  // Customer's contact number
+  customerName         String? // Customer's full name
+  customerPhone        String? // Customer's contact number
   amount               Float
   costPrice            Float
   createdAt            DateTime @default(now())
@@ -209,7 +257,12 @@ model Order {
   courier              String?
 
   // Relations
-  admin                Admin    @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
+  admin Admin @relation(fields: [adminId], references: [adminId], onDelete: Cascade)
 
   @@id([adminId, id])
+  @@index([adminId, status])
+  @@index([adminId, createdAt])
+  @@index([adminId, userId])
+  @@index([adminId, userId, status])
+  @@index([adminId, status, createdAt])
 }

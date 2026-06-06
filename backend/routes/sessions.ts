@@ -15,8 +15,12 @@ router.get("/sessions", async (req, res) => {
     const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize as string) || 20));
     const state = req.query.state as string | undefined;
     const search = (req.query.search as string || "").trim().toLowerCase();
+    const blockedOnly = req.query.blocked === "true";
     const result = await dbService.getSessionsPaginated(adminId, page, pageSize, state);
     let sessions = result.sessions;
+    if (blockedOnly) {
+      sessions = sessions.filter(s => s.isBlocked === true);
+    }
     if (search) {
       sessions = sessions.filter(s => s.userId.toLowerCase().includes(search));
     }
@@ -31,6 +35,33 @@ router.get("/sessions", async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch sessions" });
+  }
+});
+
+router.get("/sessions/blocked", async (req, res) => {
+  try {
+    const adminId = getAdminId(req);
+    const result = await dbService.getSessionsPaginated(adminId, 1, 200);
+    const blocked = result.sessions.filter(s => s.isBlocked === true);
+    res.json({
+      data: blocked,
+      total: blocked.length,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch blocked users" });
+  }
+});
+
+router.patch("/sessions/:id/unblock", async (req, res) => {
+  try {
+    const adminId = getAdminId(req);
+    const sessionId = req.params.id;
+    await dbService.updateSession(adminId, sessionId, { isBlocked: false });
+    logAction(adminId, "unblock", "session", sessionId, undefined, req.ip)
+      .catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 });
 

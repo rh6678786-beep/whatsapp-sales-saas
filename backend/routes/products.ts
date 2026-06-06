@@ -32,7 +32,7 @@ router.get("/products", async (req, res) => {
       },
     });
   } catch (error: any) {
-    console.error(`[PRODUCTS_GET_ERROR]`, error?.message || error);
+    log.error({ err: error?.message || error }, "Failed to fetch products");
     res.status(500).json({ error: error?.message || "Failed to fetch products" });
   }
 });
@@ -55,22 +55,16 @@ router.get("/products/search", async (req, res) => {
 
 router.post("/products", validate(createProductSchema), async (req, res) => {
   try {
-    console.log(`[PRODUCTS_POST] Request received:`, JSON.stringify(req.body).slice(0, 200));
     const adminId = getAdminId(req);
-    console.log(`[PRODUCTS_POST] adminId: ${adminId}`);
     const existingSub = await dbService.getSubscription(adminId);
-    console.log(`[PRODUCTS_POST] subscription:`, existingSub);
     const count = await dbService.getProductCount(adminId);
-    console.log(`[PRODUCTS_POST] product count: ${count}`);
     const limitCheck = await checkLimit(adminId, "maxProducts", count, existingSub);
-    console.log(`[PRODUCTS_POST] limitCheck:`, limitCheck);
     if (!limitCheck.allowed) {
-      console.log(`[PRODUCTS_POST] BLOCKED by limit: ${limitCheck.reason}`);
+      log.warn({ adminId, reason: limitCheck.reason }, "Product creation blocked by limit");
       return res.status(403).json({ error: limitCheck.reason });
     }
-    console.log(`[PRODUCTS_POST] Adding product...`);
     const product = await dbService.addProduct(adminId, req.body);
-    console.log(`[PRODUCTS_POST] Product added:`, product.id);
+    log.info({ adminId, productId: product.id, name: req.body.name }, "Product created");
     logAction(adminId, "create", "product", product.id, { name: req.body.name, price: req.body.price }, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
     import("../services/recommendationService.js").then(async ({ getProductEmbeddingText }) => {
       const { generateEmbedding } = await import("../services/embeddingService.js");
@@ -86,10 +80,10 @@ router.post("/products", validate(createProductSchema), async (req, res) => {
           [adminId, product.id, text, `[${embedding.join(",")}]`]
         );
       }
-    }).catch(e => console.error("[PRODUCT_EMBEDDING] Failed:", e.message));
+    }).catch(e => log.warn({ err: e.message }, "Product embedding generation failed (non-blocking)"));
     res.json(product);
   } catch (error: any) {
-    console.error(`[PRODUCTS_POST_ERROR]`, error?.stack || error?.message || error);
+    log.error({ err: error, adminId: getAdminId(req) }, "Failed to create product");
     res.status(500).json({ error: error?.message || "Failed to add product" });
   }
 });
@@ -117,7 +111,7 @@ router.patch("/products/:id", validate(updateProductSchema), async (req, res) =>
           );
         }
       }
-    }).catch(e => console.error("[PRODUCT_EMBEDDING_UPDATE] Failed:", e.message));
+    }).catch(e => log.warn({ err: e.message }, "Product embedding update failed (non-blocking)"));
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -135,7 +129,7 @@ router.delete("/products/batch", requireAuth, async (req: AuthenticatedRequest, 
       await dbService.permanentDeleteProduct(adminId, id);
       logAction(adminId, "delete", "product", id, undefined, req.ip).catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
       pool.query(`DELETE FROM product_embeddings WHERE admin_id = $1 AND product_id = $2`, [adminId, id])
-        .catch(e => console.error("[PRODUCT_EMBEDDING_DELETE] Failed:", e.message));
+        .catch(e => log.warn({ err: e.message, adminId }, "Product embedding delete failed (non-blocking)"));
     }
     res.json({ success: true, deleted: ids.length });
   } catch (error: any) {
@@ -165,6 +159,40 @@ router.patch("/products/:id/restore", async (req, res) => {
   }
 });
 
+// POST /api/products/bulk-save — Save multiple products at once (used by visual Bulk Import UI)
+router.post("/products/bulk-save", requireAuth, async (req: AuthenticatedRequest, res) => {
+  try {
+    const adminId = req.adminId!;
+    const { products } = req.body;
+
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ error: "products array is required" });
+    }
+
+    if (products.length > 500) {
+      return res.status(400).json({ error: "Maximum 500 products at a time" });
+    }
+
+    // Validate each product
+    for (let i = 0; i < products.length; i++) {
+      const p = products[i];
+      if (!p.name || typeof p.name !== "string" || !p.name.trim()) {
+        return res.status(400).json({ error: `Product at index ${i} is missing a valid name` });
+      }
+      if (typeof p.price !== "number" || p.price <= 0) {
+        return res.status(400).json({ error: `Product "${p.name}" has invalid price` });
+      }
+    }
+
+    const result = await dbService.bulkSaveProducts(adminId, products);
+    log.info({ adminId, created: result.created, errors: result.errors.length }, "Bulk save completed");
+    res.json(result);
+  } catch (error: any) {
+    log.error({ err: error, adminId: req.adminId }, "Bulk save failed");
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.patch("/products/:id/permanent-delete", async (req, res) => {
   try {
     const adminId = getAdminId(req);
@@ -174,7 +202,7 @@ router.patch("/products/:id/permanent-delete", async (req, res) => {
         `DELETE FROM product_embeddings WHERE admin_id = $1 AND product_id = $2`,
         [adminId, req.params.id]
       );
-    }).catch(e => console.error("[PRODUCT_EMBEDDING_DELETE] Failed:", e.message));
+    }).catch(e => log.warn({ err: e.message, adminId }, "Product embedding delete failed (non-blocking)"));
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });

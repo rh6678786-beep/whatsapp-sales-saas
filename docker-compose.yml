@@ -18,8 +18,6 @@ services:
         condition: service_healthy
     volumes:
       - uploads:/app/uploads
-      - wwebjs_auth:/app/.wwebjs_auth
-      - wwebjs_cache:/app/.wwebjs_cache
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
@@ -114,10 +112,6 @@ volumes:
   postgres_data:
     driver: local
   uploads:
-    driver: local
-  wwebjs_auth:
-    driver: local
-  wwebjs_cache:
     driver: local
 
 networks:

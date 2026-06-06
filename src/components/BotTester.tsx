@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { Send, Smartphone, User, Bot, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -50,7 +51,7 @@ export default function BotTester() {
         setChat(prev => [...prev, { role: 'model', text: "Koi response nahi aaya." }]);
       }
     } catch (err: any) {
-      console.error("Error sending message:", err);
+      toast.error("Failed to send message");
       setChat(prev => [...prev, { role: 'model', text: "Connection error: " + (err.message || "Try again") }]);
       } finally {
         setLoading(false);

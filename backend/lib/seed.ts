@@ -26,6 +26,12 @@ const products = [
 
 export async function seedDatabase(adminId: string = "default-admin") {
   try {
+    // Ensure the admin exists first (required for foreign key constraint)
+    const adminExists = await dbService.adminExists(adminId);
+    if (!adminExists) {
+      await dbService.registerAdmin(adminId, "");
+    }
+
     const existing = await dbService.getAllProducts(adminId);
     if (existing.length > 0) {
       console.log("Products already exist, skipping.");

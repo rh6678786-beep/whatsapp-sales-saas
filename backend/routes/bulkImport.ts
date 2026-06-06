@@ -68,6 +68,24 @@ function parseProducts(data: Record<string, string>[]): { products: ImportProduc
     ).replace(/[^0-9.]/g, "");
     const stockStr = String(row.stock || row.Stock || row.STOCK || "").replace(/[^0-9]/g, "");
 
+    // Parse images, videos & features from CSV (semicolon-separated values)
+    const rawImages = String(row.images || row.Images || row.IMAGE || row.image || "");
+    const rawVideos = String(row.videos || row.Videos || row.VIDEO || row.video || "");
+    const rawFeatures = String(row.features || row.Features || row.FEATURES || row.feature || "");
+
+    const splitAndFilter = (raw: string, isUrl: boolean): string[] => {
+      if (!raw.trim()) return [];
+      return raw
+        .split(/[;\n]/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0)
+        .filter(s => !isUrl || s.startsWith('http://') || s.startsWith('https://') || s.startsWith('data:'));
+    };
+
+    const images = splitAndFilter(rawImages, true);
+    const videos = splitAndFilter(rawVideos, true);
+    const features = splitAndFilter(rawFeatures, false);
+
     if (!name) {
       errors.push({ row: rowNum, error: "Missing product name" });
       continue;
@@ -87,6 +105,9 @@ function parseProducts(data: Record<string, string>[]): { products: ImportProduc
       price,
       costPrice,
       stock: Math.max(0, stock),
+      images,
+      videos,
+      features,
     });
   }
 
@@ -187,9 +208,9 @@ router.post("/bulk-import/products/upload", upload.single("file"), async (req: A
           name: p.name,
           price: p.price,
           costPrice: p.costPrice || 0,
-          features: [],
-          images: [],
-          videos: [],
+          features: p.features || [],
+          images: p.images || [],
+          videos: p.videos || [],
           stock: p.stock ?? 10,
         });
         created++;

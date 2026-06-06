@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { Session, Message, SalesState, formatUserId } from '../types';
 import { MessageSquare, Search, Clock, Smartphone, CheckCheck, Eye, User, AlertTriangle, Send, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -160,7 +161,7 @@ export default function LiveChat() {
                       await axios.patch(`/api/sessions/${selectedSession.id}`, { isBlocked: !selectedSession.isBlocked });
                       setSelectedSession(prev => prev ? { ...prev, isBlocked: !prev.isBlocked } : null);
                     } catch (e) {
-                      console.error("Failed to update session:", e);
+                      toast.error('Failed to update session');
                     }
                   }}
                   className="px-4 py-2 bg-red-50 text-red-500 rounded-xl text-[10px] font-black uppercase"
@@ -199,7 +200,7 @@ export default function LiveChat() {
                             ...prev,
                             metadata: { ...(prev.metadata || {}), handoffTriggered: false, aiPaused: false, aiResumed: true }
                           } : null);
-                        } catch (e) { console.error(e); }
+                        } catch (e) { toast.error('Failed to resume AI'); }
                       }}
                       className="px-3 py-1.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl text-[10px] font-black uppercase flex items-center gap-1.5 hover:opacity-80 transition-opacity"
                     >
@@ -218,7 +219,7 @@ export default function LiveChat() {
                           try {
                             await axios.post('/api/supervisor/send', { userId: selectedSession.id, message: supervisorMsg.trim() });
                             setSupervisorMsg('');
-                          } catch (err) { console.error(err); }
+                          } catch (err) { toast.error('Failed to send supervisor message'); }
                           setSending(false);
                         }
                       }}
@@ -232,7 +233,7 @@ export default function LiveChat() {
                         try {
                           await axios.post('/api/supervisor/send', { userId: selectedSession.id, message: supervisorMsg.trim() });
                           setSupervisorMsg('');
-                        } catch (err) { console.error(err); }
+                        } catch (err) { toast.error('Failed to send supervisor message'); }
                         setSending(false);
                       }}
                       disabled={sending || !supervisorMsg.trim()}

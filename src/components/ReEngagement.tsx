@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { motion, AnimatePresence } from 'motion/react';
 import { Users, Send, Clock, Sparkles, MessageSquare, RefreshCw, Loader2, CheckCircle, XCircle, Target, TrendingUp, User, Calendar, Zap, Eye, ChevronRight, Lock } from 'lucide-react';
 import { Session, formatUserId } from '../types';
@@ -79,7 +80,7 @@ export default function ReEngagement({ onNavigate }: { onNavigate?: (tab: string
         setTimeout(() => fetchCustomers(), 1000);
       }
     } catch (err) {
-      console.error("Failed to send re-engagement:", err);
+      toast.error("Failed to send re-engagement message");
       setPreviewMsg("Failed to send message. Check server.");
     }
     setSendingOne(null);
@@ -104,7 +105,7 @@ export default function ReEngagement({ onNavigate }: { onNavigate?: (tab: string
       setShowConfig(false);
       fetchCustomers();
     } catch (e) {
-      console.error("Failed to save config:", e);
+      toast.error("Failed to save re-engagement settings");
     }
   };
 

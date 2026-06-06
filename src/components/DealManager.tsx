@@ -30,7 +30,7 @@ export default function DealManager() {
       const res = await axios.get('/api/deals');
       setDeals(res.data);
     } catch (err: any) {
-      console.error('Failed to fetch deals:', err);
+      toast.error('Failed to load deals');
     } finally {
       setLoading(false);
     }
@@ -41,7 +41,7 @@ export default function DealManager() {
       const res = await axios.get('/api/products?page=1&limit=500');
       setProducts(res.data.products || []);
     } catch (err: any) {
-      console.error('Failed to fetch products:', err);
+      toast.error('Failed to load products');
     }
   };
 
@@ -147,7 +147,7 @@ export default function DealManager() {
 
       fetchDeals();
     } catch (err) {
-      console.error('Failed to delete deal:', err);
+      toast.error('Failed to delete deal');
     }
   };
 
@@ -156,7 +156,7 @@ export default function DealManager() {
       await axios.patch(`/api/deals/${deal.id}`, { isActive: !deal.isActive });
       fetchDeals();
     } catch (err) {
-      console.error('Failed to toggle deal:', err);
+      toast.error('Failed to toggle deal');
     }
   };
 

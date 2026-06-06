@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { 
   Megaphone, Sparkles, Image, Video, Calendar, Clock, 
   Send, CheckCircle, XCircle, Loader2, AlertCircle, 
@@ -64,7 +65,7 @@ export default function AutoPublisher() {
       const res = await axios.get('/api/products?page=1&limit=500');
       setProducts(res.data.products || []);
     } catch (err) {
-      console.error('Failed to fetch products', err);
+      toast.error('Failed to load products');
     } finally {
       setIsLoadingProducts(false);
     }
@@ -76,7 +77,7 @@ export default function AutoPublisher() {
       const res = await axios.get('/api/publish/history');
       setHistory(res.data);
     } catch (err) {
-      console.error('Failed to fetch publication history', err);
+      toast.error('Failed to load publication history');
     } finally {
       setIsLoadingHistory(false);
     }

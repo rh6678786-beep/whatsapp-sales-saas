@@ -123,6 +123,35 @@ router.post("/billing/portal", async (req, res) => {
   }
 });
 
+router.get("/billing/stripe-status", async (req, res) => {
+  try {
+    const isConfigured = !!env.STRIPE_SECRET_KEY;
+    const hasWebhookSecret = !!env.STRIPE_WEBHOOK_SECRET;
+    const hasPriceIds = !!env.STRIPE_STARTER_PRICE_ID && !!env.STRIPE_PROFESSIONAL_PRICE_ID;
+    const isLiveMode = isConfigured && env.STRIPE_SECRET_KEY.startsWith("sk_live_");
+    const isTestMode = isConfigured && env.STRIPE_SECRET_KEY.startsWith("sk_test_");
+
+    res.json({
+      configured: isConfigured,
+      webhookConfigured: hasWebhookSecret,
+      priceIdsConfigured: hasPriceIds,
+      mode: isLiveMode ? "live" : isTestMode ? "test" : "not_configured",
+      status: isConfigured && hasWebhookSecret && hasPriceIds
+        ? "ready"
+        : !isConfigured
+          ? "not_configured"
+          : "partial",
+      missing: [
+        ...(!isConfigured ? ["STRIPE_SECRET_KEY"] : []),
+        ...(!hasWebhookSecret ? ["STRIPE_WEBHOOK_SECRET"] : []),
+        ...(!hasPriceIds ? ["STRIPE_STARTER_PRICE_ID or STRIPE_PROFESSIONAL_PRICE_ID"] : []),
+      ],
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.post("/billing/webhook", async (req: any, res) => {
   const sig = req.headers["stripe-signature"] as string;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";

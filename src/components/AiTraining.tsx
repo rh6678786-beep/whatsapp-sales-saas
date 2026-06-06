@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { Brain, Save, CheckCircle, Loader2, Plus, X, BookOpen, MessageSquare, Radio } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -28,7 +29,7 @@ export default function AiTraining() {
       if (data.aiPersonality) setPersonality(data.aiPersonality);
       if (data.aiKeywords) setKeywords(data.aiKeywords);
       if (data.aiKnowledge) setKnowledgeBase(data.aiKnowledge);
-    }).catch(err => console.error('Failed to load AI settings:', err));
+    }).catch(err => toast.error('Failed to load AI settings'));
   }, []);
 
   const handleSave = async (field: string, value: any, setSaving: (v: boolean) => void, setSaved: (v: boolean) => void) => {

@@ -1,29 +1,12 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
 import multer from "multer";
-import path from "path";
-import fs from "fs";
 import { getAdminId } from "../middleware/auth.js";
 import { logAction } from "../services/auditLogService.js";
+import { uploadFile } from "../services/storageService.js";
 import { createChildLogger } from "../lib/logger.js";
 
 const log = createChildLogger("route:upload");
 const router = Router();
-
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-
-// Ensure uploads directory exists
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: UPLOADS_DIR,
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname) || ".jpg";
-    cb(null, `${randomUUID()}${ext}`);
-  },
-});
 
 const ALLOWED_MIMES = [
   "image/jpeg", "image/png", "image/gif", "image/webp",
@@ -42,24 +25,23 @@ const FILE_SIGNATURES: Record<string, { offset: number; bytes: number[] }[]> = {
   "application/pdf": [{ offset: 0, bytes: [0x25, 0x50, 0x44, 0x46] }],
 };
 
-function validateFileContent(filePath: string, mimetype: string): boolean {
+/**
+ * Validate file content by checking magic bytes.
+ * Works with both buffer (memory storage) and file path (disk storage).
+ */
+function validateFileBuffer(buffer: Buffer, mimetype: string): boolean {
   const sigs = FILE_SIGNATURES[mimetype];
   if (!sigs || sigs.length === 0) return true;
-  const fd = fs.openSync(filePath, "r");
-  try {
-    for (const sig of sigs) {
-      const buf = Buffer.alloc(sig.bytes.length);
-      fs.readSync(fd, buf, 0, buf.length, sig.offset);
-      if (!sig.bytes.every((b, i) => buf[i] === b)) return false;
-    }
-    return true;
-  } finally {
-    fs.closeSync(fd);
+  for (const sig of sigs) {
+    if (buffer.length < sig.offset + sig.bytes.length) return false;
+    if (!sig.bytes.every((b, i) => buffer[sig.offset + i] === b)) return false;
   }
+  return true;
 }
 
+// Use memory storage so we get the buffer for validation and cloud upload
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: MAX_SIZE, files: 10 },
   fileFilter: (_req, file, cb) => {
     if (ALLOWED_MIMES.includes(file.mimetype)) {
@@ -82,12 +64,15 @@ router.post("/upload", upload.array("files", 10), async (req, res) => {
     const rejectedFiles: string[] = [];
 
     for (const f of files) {
-      if (!validateFileContent(f.path, f.mimetype)) {
+      // Validate content via magic bytes (using buffer instead of file path)
+      if (!validateFileBuffer(f.buffer, f.mimetype)) {
         rejectedFiles.push(f.originalname);
-        try { fs.unlinkSync(f.path); } catch {}
         continue;
       }
-      validFiles.push({ original: f.originalname, url: `/uploads/${f.filename}` });
+
+      // Upload to cloud storage (or local fallback)
+      const url = await uploadFile(f.buffer, f.originalname, f.mimetype);
+      validFiles.push({ original: f.originalname, url });
     }
 
     if (rejectedFiles.length > 0) {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 import { Save, CreditCard, Wallet, Building2, CheckCircle, Loader2, ChevronDown, X, Sparkles, Shield, Key, Smartphone, Banknote, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -81,7 +82,7 @@ export default function PaymentSettings() {
         easyPaisa: { merchantId: res.data.easyPaisa?.merchantId || '', merchantPassword: '', isActive: res.data.easyPaisa?.isActive || false },
         bankTransfer: res.data.bankTransfer || { accountTitle: '', accountNumber: '', bankName: '', branchCode: '', isActive: false },
       });
-    } catch (err) { console.error('Failed to load:', err); }
+    } catch (err) { toast.error('Failed to load payment config'); }
     finally { setLoading(false); }
   };
 
@@ -96,7 +97,7 @@ export default function PaymentSettings() {
     if (errors.length > 0) { setError(errors.join('\n')); return; }
     setSaving(true);
     try { await axios.post('/api/payment/config', config); setSaved(true); setTimeout(() => setSaved(false), 2000); }
-    catch (err) { console.error('Failed to save:', err); }
+    catch (err) { toast.error('Failed to save payment config'); }
     finally { setSaving(false); }
   };
 

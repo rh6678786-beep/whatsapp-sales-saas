@@ -1,13 +1,14 @@
 import { Router } from "express";
 import { requireAuth, AuthenticatedRequest } from "../middleware/auth.js";
 import { pool } from "../services/dbService.js";
+import { createChildLogger } from "../lib/logger.js";
 
+const log = createChildLogger("route:stats");
 const router = Router();
 
 router.get("/stats", requireAuth, async (req: AuthenticatedRequest, res) => {
+  const adminId = req.adminId!;
   try {
-    const adminId = req.adminId!;
-
     const [ordersRes, pendingRes, sessionsRes, salesRes, todaySalesRes, timeStats] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int as count FROM "Order" WHERE "adminId" = $1`, [adminId]),
       pool.query(`SELECT COUNT(*)::int as count FROM "Session" WHERE "adminId" = $1 AND "state" IN ('PAYMENT_PENDING','PAYMENT_AWAITING')`, [adminId]),
@@ -51,7 +52,7 @@ router.get("/stats", requireAuth, async (req: AuthenticatedRequest, res) => {
       },
     });
   } catch (error: any) {
-    console.error("[STATS] Error:", error.message);
+    log.error({ err: error, adminId }, "Failed to fetch stats");
     res.status(500).json({ error: error.message });
   }
 });

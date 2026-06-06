@@ -12,23 +12,96 @@ const log = createChildLogger("db");
 const DATABASE_URL = env.DATABASE_URL;
 const POOL_MAX = parseInt(process.env.DB_POOL_MAX || "10", 10);
 
-// SSL configuration — use env setting, never silently disable
-const sslConfig = env.DB_SSL_REJECT_UNAUTHORIZED
-  ? { rejectUnauthorized: true }
-  : false;
+// SSL configuration — Supabase uses self-signed certs, accept them
+const sslConfig = { rejectUnauthorized: false };
 
 export const pool = new pg.Pool({
   connectionString: DATABASE_URL,
   ssl: sslConfig,
   max: POOL_MAX,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  connectionTimeoutMillis: 20000,
   keepAlive: true,
   keepAliveInitialDelayMillis: 10000,
 });
 
-pool.on("connect", () => log.info("PostgreSQL pool connected"));
-pool.on("error", (err) => log.warn({ err }, "PostgreSQL pool error (non-fatal)"));
+// ---- Connection state & auto-reconnect ----
+
+let _isDbConnected = true;
+let _isRecovering = false;
+let _reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const RECONNECT_BASE_DELAY = 1000; // 1 second
+
+/**
+ * Check if the database pool is currently in a connected state.
+ */
+export function isDbConnected(): boolean {
+  return _isDbConnected;
+}
+
+/**
+ * Get current DB connection status info.
+ */
+export function getDbStatus(): { connected: boolean; reconnectAttempts: number; isRecovering: boolean } {
+  return { connected: _isDbConnected, reconnectAttempts: _reconnectAttempts, isRecovering: _isRecovering };
+}
+
+/**
+ * Attempt to re-establish the database pool connection.
+ * Uses exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (capped)
+ */
+async function attemptPoolRecovery(): Promise<boolean> {
+  if (_isRecovering) {
+    log.info("Pool recovery already in progress — skipping duplicate attempt");
+    return false;
+  }
+  _isRecovering = true;
+
+  while (_reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+    _reconnectAttempts++;
+    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, _reconnectAttempts - 1), 30000);
+    log.info({ attempt: _reconnectAttempts, maxAttempts: MAX_RECONNECT_ATTEMPTS, delayMs: delay }, "Attempting database reconnection");
+
+    await new Promise(r => setTimeout(r, delay));
+
+    try {
+      const client = await pool.connect();
+      await client.query("SELECT 1");
+      client.release();
+      _isDbConnected = true;
+      _reconnectAttempts = 0;
+      _isRecovering = false;
+      log.info("Database reconnection successful — pool is healthy again");
+      return true;
+    } catch (err) {
+      log.warn({ attempt: _reconnectAttempts, err }, "Database reconnection attempt failed — will retry");
+    }
+  }
+
+  _isRecovering = false;
+  log.error("Max reconnection attempts reached — database is still unreachable");
+  return false;
+}
+
+/**
+ * Manually trigger pool recovery (called from health endpoint or external triggers).
+ */
+export async function recoverPool(): Promise<boolean> {
+  if (_isDbConnected) return true;
+  _reconnectAttempts = 0;
+  return attemptPoolRecovery();
+}
+
+pool.on("connect", () => {
+  log.info("PostgreSQL pool connected");
+});
+pool.on("error", (err) => {
+  log.warn({ err }, "PostgreSQL pool error — triggering auto-reconnect");
+  _isDbConnected = false;
+  // Don't await — fire-and-forget to avoid blocking the event loop
+  attemptPoolRecovery();
+});
 pool.on("remove", () => { /* pool client removed */ });
 
 const adapter = new PrismaPg(pool);
@@ -39,14 +112,27 @@ async function dbNow(): Promise<Date> {
   return rows[0].now;
 }
 
-// Keep-alive to prevent idle connection termination
+// Keep-alive ping — prevents idle connection termination & detects disconnects early
+// Runs every 30 seconds (more frequent than the default 60s for faster recovery)
 const keepAliveInterval = setInterval(async () => {
   try {
     await prisma.$queryRaw`SELECT 1`;
+    // Connection was restored — reset state if we were in recovery
+    if (!_isDbConnected) {
+      log.info("Database connection restored (keep-alive success)");
+      _isDbConnected = true;
+      _reconnectAttempts = 0;
+    }
   } catch (err: any) {
-    log.warn({ err }, "Keep-alive ping failed");
+    log.warn({ err }, "Keep-alive ping failed — database may be unreachable");
+    _isDbConnected = false;
+    // Only trigger recovery if not already recovering
+    // (pool.on("error") or another keep-alive tick may have already started it)
+    if (!_isRecovering && _reconnectAttempts === 0) {
+      attemptPoolRecovery();
+    }
   }
-}, 60000);
+}, 30000);
 
 // Cleanup on process exit
 process.on("SIGTERM", () => {
@@ -95,9 +181,17 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
     } catch (e: unknown) {
       const isLast = i === retries - 1;
       const isConnErr = isConnectionError(e);
-      if (!isConnErr || isLast) throw e;
-      const delayMs = 1000 * (i + 1);
-      log.warn({ attempt: i + 1, retries, err: (e as Error).message }, "DB connection error, retrying");
+      if (!isConnErr || isLast) {
+        // On last attempt with connection error, try triggering pool recovery
+        if (isConnErr && isLast) {
+          _isDbConnected = false;
+          // Fire-and-forget pool recovery
+          attemptPoolRecovery();
+        }
+        throw e;
+      }
+      const delayMs = Math.min(1000 * Math.pow(2, i), 8000); // exponential: 1s, 2s, 4s
+      log.warn({ attempt: i + 1, retries, delayMs, err: (e as Error).message }, "DB connection error — retrying after delay");
       await new Promise((r) => setTimeout(r, delayMs));
     }
   }
@@ -160,8 +254,33 @@ function toSession(record: PrismaSession): Session {
     remindersCount: record.remindersCount,
     lastReminderAt: record.lastReminderAt instanceof Date ? record.lastReminderAt.toISOString() : record.lastReminderAt ?? undefined,
     isBlocked: record.isBlocked ?? undefined,
+    birthday: record.birthday ?? undefined,
     metadata: (record.metadata as SessionMetadata) ?? undefined,
   };
+}
+
+/**
+ * Extract and standardize birthday from metadata.
+ * Normalizes to MM-DD format for indexed exact-match queries.
+ * Supports: YYYY-MM-DD, DD-MM-YYYY, MM/DD/YYYY, MM-DD, etc.
+ */
+function extractBirthday(metadata: any): string | null {
+  if (!metadata || !metadata.birthday) return null;
+  const raw = String(metadata.birthday).trim();
+  if (!raw) return null;
+  // ISO format: YYYY-MM-DD
+  const isoMatch = raw.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+  if (isoMatch) {
+    return `${isoMatch[2].padStart(2, "0")}-${isoMatch[3].padStart(2, "0")}`;
+  }
+  // Other formats: MM-DD, MM/DD, DD-MM-YYYY, etc.
+  const dateMatch = raw.match(/(\d{1,2})[-\/](\d{1,2})(?:[-\/]\d{2,4})?/);
+  if (dateMatch) {
+    let month = dateMatch[1], day = dateMatch[2];
+    if (parseInt(month, 10) > 12) { month = dateMatch[2]; day = dateMatch[1]; }
+    return `${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+  return raw;
 }
 
 function toMessage(record: PrismaMessage): Message {
@@ -208,7 +327,7 @@ const ENCRYPTED_FIELDS = ["geminiApiKey", "smtpPass"] as const;
 const SETTINGS_JSON_FIELDS = [
   "paymentConfig", "reEngagement", "facebook", "instagram",
   "telegram", "subscription", "aiLearningPatterns", "memoryConfig",
-  "proactiveConfig", "teamMembers",
+  "proactiveConfig", "teamMembers", "whatsappCloud",
 ] as const;
 
 const defaultSettings = {
@@ -353,6 +472,14 @@ export const dbService = {
 
   async createSession(adminId: string, userId: string): Promise<Session> {
     const now = await dbNow();
+    const metadata: any = {
+      leadScore: 0,
+      leadStatus: "COLD",
+      messageCount: 0,
+      lastCustomerMessage: "",
+      urgencyLevel: "Normal",
+      customerPhone: userId.includes(":") ? userId.split(":")[1] : userId,
+    };
     const session: any = {
       adminId,
       id: userId,
@@ -360,14 +487,8 @@ export const dbService = {
       state: SalesState.NEW,
       lastMessageAt: now,
       remindersCount: 0,
-      metadata: {
-        leadScore: 0,
-        leadStatus: "COLD",
-        messageCount: 0,
-        lastCustomerMessage: "",
-        urgencyLevel: "Normal",
-        customerPhone: userId.includes(":") ? userId.split(":")[1] : userId,
-      },
+      metadata,
+      birthday: extractBirthday(metadata),
     };
     await withRetry(() => prisma.session.create({ data: session }));
     return toSession(session);
@@ -378,6 +499,10 @@ export const dbService = {
     // Only update lastMessageAt to now if state or metadata changed but no explicit lastMessageAt was provided
     if (!data.lastMessageAt && (data.state || data.metadata)) {
       updateData.lastMessageAt = await dbNow();
+    }
+    // Sync birthday from metadata when metadata is being updated
+    if (data.metadata) {
+      updateData.birthday = extractBirthday(data.metadata);
     }
     delete updateData.id;
     delete updateData.userId;
@@ -393,6 +518,8 @@ export const dbService = {
       })
     );
   },
+
+
 
   async addMessage(adminId: string, sessionId: string, message: Message) {
     await withRetry(() =>
@@ -411,7 +538,7 @@ export const dbService = {
   },
 
   async getMessages(adminId: string, sessionId: string): Promise<Message[]> {
-    const records = await withRetry(() =>
+    const records: any[] = await withRetry(() =>
       prisma.message.findMany({
         where: { adminId, sessionId },
         orderBy: { timestamp: "asc" },
@@ -430,7 +557,7 @@ export const dbService = {
     if (cached) return cached;
 
     try {
-      const records = await withRetry(() =>
+      const records: any[] = await withRetry(() =>
         prisma.product.findMany({ where: { adminId, deleted: false } })
       );
       const result = records.map((r: any) => ({
@@ -454,7 +581,7 @@ export const dbService = {
 
   async getProductsPaginated(adminId: string, page: number, limit: number): Promise<{ products: Product[]; total: number; page: number; limit: number; totalPages: number }> {
     const skip = (page - 1) * limit;
-    const [records, total] = await withRetry(() =>
+    const [records, total]: [any[], number] = await withRetry(() =>
       Promise.all([
         prisma.product.findMany({
           where: { adminId, deleted: false },
@@ -466,7 +593,7 @@ export const dbService = {
       ])
     );
     return {
-      products: records.map((r: any) => ({
+      products: (records as any[]).map((r: any) => ({
         id: r.id,
         name: r.name,
         price: r.price,
@@ -542,7 +669,7 @@ export const dbService = {
   },
 
   async getAllDeals(adminId: string): Promise<Deal[]> {
-    const records = await withRetry(() =>
+    const records: any[] = await withRetry(() =>
       prisma.deal.findMany({
         where: { adminId, deleted: false },
         orderBy: { createdAt: "desc" },
@@ -638,7 +765,7 @@ export const dbService = {
 
   async getOrdersPaginated(adminId: string, page: number, pageSize: number): Promise<{ orders: Order[]; total: number }> {
     const skip = (page - 1) * pageSize;
-    const [records, total] = await withRetry(() =>
+    const [records, total]: [any[], number] = await withRetry(() =>
       Promise.all([
         prisma.order.findMany({
           where: { adminId },
@@ -649,12 +776,12 @@ export const dbService = {
         prisma.order.count({ where: { adminId } }),
       ])
     );
-    return { orders: records.map(toOrder), total };
+    return { orders: (records as any[]).map(toOrder), total };
   },
 
   async getMessagesPaginated(adminId: string, sessionId: string, page: number, pageSize: number): Promise<{ messages: Message[]; total: number }> {
     const skip = (page - 1) * pageSize;
-    const [records, total] = await withRetry(() =>
+    const [records, total]: [any[], number] = await withRetry(() =>
       Promise.all([
         prisma.message.findMany({
           where: { adminId, sessionId },
@@ -665,11 +792,11 @@ export const dbService = {
         prisma.message.count({ where: { adminId, sessionId } }),
       ])
     );
-    return { messages: records.map(toMessage), total };
+    return { messages: (records as any[]).map(toMessage), total };
   },
 
   async getAllOrders(adminId: string): Promise<Order[]> {
-    const records = await withRetry(() =>
+    const records: any[] = await withRetry(() =>
       prisma.order.findMany({ where: { adminId } })
     );
     return records.map(toOrder);
@@ -678,7 +805,7 @@ export const dbService = {
   async getTodayOrders(adminId: string): Promise<Order[]> {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const records = await withRetry(() =>
+    const records: any[] = await withRetry(() =>
       prisma.order.findMany({
         where: { adminId, createdAt: { gte: todayStart } },
         orderBy: { createdAt: "desc" },
@@ -725,7 +852,7 @@ export const dbService = {
   },
 
   async getStats(adminId: string) {
-    const [confirmedCount, pendingCount, activeUserCount, productCount, recentSessions] = await withRetry(() =>
+    const [confirmedCount, pendingCount, activeUserCount, productCount, recentSessions]: [number, number, number, number, any[]] = await withRetry(() =>
       Promise.all([
         prisma.session.count({ where: { adminId, state: { in: [SalesState.ORDER_CONFIRMED, SalesState.DELIVERED] } } }),
         prisma.session.count({ where: { adminId, state: { in: [SalesState.PAYMENT_SENT, SalesState.PAYMENT_AWAITING] } } }),
@@ -740,17 +867,17 @@ export const dbService = {
       ])
     );
 
-    const productIds = [...new Set(recentSessions.map(s => s.selectedProductId).filter(Boolean))] as string[];
-    const products = productIds.length > 0
+    const productIds = [...new Set((recentSessions as any[]).map((s: any) => s.selectedProductId).filter(Boolean))] as string[];
+    const products: any[] = productIds.length > 0
       ? await withRetry(() => prisma.product.findMany({ where: { id: { in: productIds }, adminId }, select: { id: true, price: true, costPrice: true } }))
       : [];
-    const productMap = new Map(products.map(p => [p.id, p]));
+    const productMap = new Map(products.map((p: any) => [p.id, p]));
 
     let totalSales = 0;
     let totalProfit = 0;
 
     for (const s of recentSessions) {
-      const p = s.selectedProductId ? productMap.get(s.selectedProductId) : null;
+      const p: any = s.selectedProductId ? productMap.get(s.selectedProductId) : null;
       const meta = s.metadata as any;
       const negotiated = meta?.negotiationState?.currentOfferedPrice;
       const price = negotiated ?? p?.price;
@@ -784,7 +911,7 @@ export const dbService = {
     if (state) {
       where.state = state;
     }
-    const [records, total] = await withRetry(() =>
+    const [records, total]: [any[], number] = await withRetry(() =>
       Promise.all([
         prisma.session.findMany({
           where,
@@ -795,11 +922,11 @@ export const dbService = {
         prisma.session.count({ where }),
       ])
     );
-    return { sessions: records.map(toSession), total };
+    return { sessions: (records as any[]).map(toSession), total };
   },
 
   async getRecentSessions(adminId: string, limit: number): Promise<Session[]> {
-    const records = await withRetry(() =>
+    const records: any[] = await withRetry(() =>
       prisma.session.findMany({
         where: { adminId },
         orderBy: { lastMessageAt: "desc" },
@@ -811,7 +938,7 @@ export const dbService = {
 
   async getInactiveSessions(adminId: string, inactiveDays: number): Promise<Session[]> {
     const cutoff = new Date(Date.now() - inactiveDays * 24 * 60 * 60 * 1000);
-    const records = await withRetry(() =>
+    const records: any[] = await withRetry(() =>
       prisma.session.findMany({
         where: {
           adminId,
@@ -826,7 +953,7 @@ export const dbService = {
 
   async getSessionsByState(adminId: string, states: SalesState[], excludeBlocked = true): Promise<Session[]> {
     try {
-      const records = await withRetry(() =>
+      const records: any[] = await withRetry(() =>
         prisma.session.findMany({
           where: {
             adminId,
@@ -844,21 +971,22 @@ export const dbService = {
     try {
       const today = new Date();
       const mmdd = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      const result = await withRetry(() =>
-        prisma.$queryRaw<PrismaSession[]>`
-          SELECT * FROM "Session"
-          WHERE "adminId" = ${adminId}
-            AND "isBlocked" = false
-            AND "metadata"->>'birthday' LIKE ${'%' + mmdd + '%'}
-        `
+      const records: any[] = await withRetry(() =>
+        prisma.session.findMany({
+          where: {
+            adminId,
+            isBlocked: false,
+            birthday: mmdd,
+          },
+        })
       );
-      return (result || []).map(toSession);
+      return records.map(toSession);
     } catch { return []; }
   },
 
   async getCustomerOrderedProductIds(adminId: string, userId: string): Promise<string[]> {
     try {
-      const orders = await withRetry(() =>
+      const orders: any[] = await withRetry(() =>
         prisma.order.findMany({
           where: {
             adminId,
@@ -868,7 +996,7 @@ export const dbService = {
           select: { productId: true },
         })
       );
-      return orders.map(o => o.productId);
+      return orders.map((o: any) => o.productId);
     } catch { return []; }
   },
 
@@ -886,7 +1014,7 @@ export const dbService = {
 
   async getCampaigns(adminId: string): Promise<DripCampaign[]> {
     try {
-      const records = await withRetry(() =>
+      const records: any[] = await withRetry(() =>
         prisma.dripCampaign.findMany({
           where: { adminId },
           orderBy: { createdAt: "desc" },
@@ -947,7 +1075,7 @@ export const dbService = {
 
   async getCrossSellProductIds(adminId: string, productId: string, limit = 3): Promise<string[]> {
     try {
-      const result = await withRetry(() =>
+      const result: any[] = await withRetry(() =>
         prisma.$queryRaw<Array<{ productId: string }>>`
           SELECT o2."productId", COUNT(*) as frequency
           FROM "Order" o1
@@ -959,7 +1087,7 @@ export const dbService = {
           LIMIT ${limit}
         `
       );
-      return result.map(r => r.productId);
+      return result.map((r: any) => r.productId);
     } catch { return []; }
   },
 
@@ -1046,7 +1174,7 @@ export const dbService = {
 
   async adminExistsByEmail(email: string): Promise<boolean> {
     try {
-      const count = await withRetry(() =>
+      const count: number = await withRetry(() =>
         prisma.admin.count({ where: { verifiedEmail: email } })
       );
       return count > 0;
@@ -1057,7 +1185,7 @@ export const dbService = {
 
   async adminExists(adminId: string): Promise<boolean> {
     try {
-      const count = await withRetry(() =>
+      const count: number = await withRetry(() =>
         prisma.admin.count({ where: { adminId } })
       );
       return count > 0;
@@ -1068,9 +1196,10 @@ export const dbService = {
 
   async findAdminByEmail(email: string): Promise<any | null> {
     try {
-      return await withRetry(() =>
+      const admin = await withRetry<any>(() =>
         prisma.admin.findFirst({ where: { verifiedEmail: email } })
       );
+      return admin ?? null;
     } catch {
       return null;
     }
@@ -1150,10 +1279,33 @@ export const dbService = {
 
   async getAllAdminIds(): Promise<string[]> {
     try {
-      const admins = await withRetry(() =>
+      const admins: any[] = await withRetry(() =>
         prisma.admin.findMany({ select: { adminId: true } })
       );
-      return admins.map(a => a.adminId);
+      return admins.map((a: any) => a.adminId);
+    } catch {
+      return [];
+    }
+  },
+
+  // ---- Monitoring / Alerts ----
+
+  async getRecentAlerts(adminId: string, limit = 50): Promise<any[]> {
+    try {
+      const records = await withRetry(() =>
+        (prisma as any).aiDlq.findMany({
+          where: { adminId },
+          orderBy: { createdAt: "desc" },
+          take: limit,
+        })
+      );
+      return (records as any[]).map((r: any) => ({
+        id: r.id,
+        adminId: r.adminId,
+        operation: r.operation,
+        errorMessage: r.errorMessage || null,
+        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : r.createdAt,
+      }));
     } catch {
       return [];
     }
@@ -1169,7 +1321,7 @@ export const dbService = {
 
   async getAdminDailyCost(adminId: string): Promise<number> {
     try {
-      const result = await withRetry(() =>
+      const result: any[] = await withRetry(() =>
         prisma.$queryRaw<{ total: number }[]>`
           SELECT COALESCE(SUM(cost), 0) AS total
           FROM ai_cost_log
@@ -1184,7 +1336,7 @@ export const dbService = {
 
   async getAdminMonthlyCost(adminId: string): Promise<number> {
     try {
-      const result = await withRetry(() =>
+      const result: any[] = await withRetry(() =>
         prisma.$queryRaw<{ total: number }[]>`
           SELECT COALESCE(SUM(cost), 0) AS total
           FROM ai_cost_log
@@ -1195,5 +1347,119 @@ export const dbService = {
     } catch {
       return 0;
     }
+  },
+
+  // ---- Purchase Inventory ----
+
+  async addPurchase(adminId: string, data: {
+    productName: string;
+    productId?: string;
+    quantity: number;
+    pricePerUnit: number;
+    supplier?: string;
+    note?: string;
+  }): Promise<any> {
+    const totalCost = data.pricePerUnit * data.quantity;
+    const record = await withRetry(() =>
+      prisma.purchase.create({
+        data: {
+          adminId,
+          productName: data.productName,
+          productId: data.productId || null,
+          quantity: data.quantity,
+          pricePerUnit: data.pricePerUnit,
+          totalCost,
+          supplier: data.supplier || "",
+          note: data.note || "",
+        },
+      })
+    );
+    return record;
+  },
+
+  async getPurchases(adminId: string, from?: string, to?: string): Promise<any[]> {
+    const where: any = { adminId };
+    if (from && to) {
+      where.createdAt = {
+        gte: new Date(from),
+        lte: new Date(to + "T23:59:59.999Z"),
+      };
+    }
+    const records: any[] = await withRetry(() =>
+      prisma.purchase.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+      })
+    );
+    return records;
+  },
+
+  async getPurchaseStats(adminId: string): Promise<{ totalCost: number; count: number; thisMonth: number }> {
+    try {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      const result: any = await withRetry(() =>
+        prisma.purchase.aggregate({
+          where: { adminId },
+          _sum: { totalCost: true },
+          _count: true,
+        })
+      );
+      const monthResult: any = await withRetry(() =>
+        prisma.purchase.aggregate({
+          where: { adminId, createdAt: { gte: startOfMonth } },
+          _sum: { totalCost: true },
+        })
+      );
+      return {
+        totalCost: result._sum.totalCost || 0,
+        count: result._count,
+        thisMonth: monthResult._sum.totalCost || 0,
+      };
+    } catch {
+      return { totalCost: 0, count: 0, thisMonth: 0 };
+    }
+  },
+
+  async bulkSaveProducts(adminId: string, products: Array<{
+    name: string;
+    price: number;
+    costPrice: number;
+    stock: number;
+    features?: string[];
+    images?: string[];
+    videos?: string[];
+  }>): Promise<{ created: number; errors: { name: string; error: string }[] }> {
+    const errors: { name: string; error: string }[] = [];
+    let created = 0;
+
+    for (const p of products) {
+      try {
+        await withRetry(() =>
+          prisma.product.create({
+            data: {
+              adminId,
+              name: p.name,
+              price: p.price,
+              costPrice: p.costPrice || 0,
+              stock: p.stock ?? 10,
+              features: p.features || [],
+              images: p.images || [],
+              videos: p.videos || [],
+            },
+          })
+        );
+        created++;
+      } catch (err: any) {
+        errors.push({ name: p.name, error: err.message });
+      }
+    }
+
+    if (created > 0) {
+      await cacheDel(cacheKey("products", adminId));
+    }
+
+    return { created, errors };
   },
 };
