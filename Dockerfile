@@ -49,6 +49,7 @@ RUN npx prisma generate
 # Copy built assets from builder
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/backend ./backend
+COPY --from=builder /app/src ./src
 COPY --from=builder /app/server.ts ./
 COPY --from=builder /app/tsconfig.json ./
 
