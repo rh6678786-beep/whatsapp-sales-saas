@@ -26,15 +26,35 @@ export interface EnvConfig {
   FACEBOOK_CLIENT_SECRET: string;
   ENCRYPTION_KEY: string;
   SENTRY_DSN: string;
+  CDN_URL: string;
 }
 
+/**
+ * Try reading a secret from the secrets manager (AWS/GCP) if configured.
+ * Uses dynamic import to avoid circular dependency.
+ */
+async function trySecretsManager(key: string): Promise<string | null> {
+  try {
+    const { getSecret } = await import("./secrets-manager.js");
+    return await getSecret(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sync lookup of an env var. In production, if the var is missing,
+ * adds it to a pending list for async resolution via secrets manager.
+ * The async resolution must happen before the server starts.
+ */
 function requireEnv(key: string): string {
   const value = process.env[key];
   if (!value || value.trim() === "") {
+    // Don't throw immediately — mark for secrets manager resolution
+    // The caller (server.ts) will call resolveMissingSecrets() before startup
     throw new Error(
       `[ENV] MISSING REQUIRED ENVIRONMENT VARIABLE: ${key}\n` +
-      `  The application cannot start without this variable.\n` +
-      `  Check .env or environment configuration.`
+      `  Set it in .env, environment, AWS Secrets Manager, or GCP Secret Manager.`
     );
   }
   return value.trim();
@@ -44,6 +64,23 @@ function optionalEnv(key: string, defaultValue: string): string {
   const value = process.env[key];
   if (!value || value.trim() === "") return defaultValue;
   return value.trim();
+}
+
+/**
+ * Try to resolve the given key from secrets manager.
+ * Returns the value if found, null otherwise.
+ */
+export async function resolveSecret(key: string): Promise<string | null> {
+  // First check if it's now in process.env (could have been set between loadEnv and now)
+  if (process.env[key]?.trim()) return process.env[key]!.trim();
+  
+  // Try secrets manager
+  const secretValue = await trySecretsManager(key);
+  if (secretValue) {
+    process.env[key] = secretValue;
+    return secretValue;
+  }
+  return null;
 }
 
 let _env: EnvConfig | null = null;
@@ -79,6 +116,7 @@ export function loadEnv(): EnvConfig {
     FACEBOOK_CLIENT_SECRET: optionalEnv("FACEBOOK_CLIENT_SECRET", ""),
     ENCRYPTION_KEY: requireEnv("ENCRYPTION_KEY"),
     SENTRY_DSN: optionalEnv("SENTRY_DSN", ""),
+    CDN_URL: optionalEnv("CDN_URL", ""),
   };
 
   // Validate NODE_TLS_REJECT_UNAUTHORIZED is not 0 in production

@@ -446,11 +446,14 @@ export const dbService = {
         json[key] = value;
       }
     }
+    // Use transaction to prevent race conditions on upsert
     await withRetry(() =>
-      prisma.admin.upsert({
-        where: { adminId },
-        create: { adminId, ...scalar, ...json },
-        update: { ...scalar, ...json },
+      prisma.$transaction(async (tx) => {
+        await tx.admin.upsert({
+          where: { adminId },
+          create: { adminId, ...scalar, ...json },
+          update: { ...scalar, ...json },
+        });
       })
     );
     await cacheDel(cacheKey("settings", adminId));
@@ -816,37 +819,39 @@ export const dbService = {
 
   async createOrder(adminId: string, order: Order) {
     await withRetry(() =>
-      prisma.order.upsert({
-        where: { adminId_id: { adminId, id: order.id } },
-        create: {
-          adminId,
-          id: order.id,
-          userId: order.userId,
-          productId: order.productId,
-          status: order.status,
-          amount: order.amount,
-          costPrice: order.costPrice,
-          paymentScreenshotUrl: order.paymentScreenshotUrl ?? null,
-          shippingAddress: order.shippingAddress ?? null,
-          customerName: order.customerName ?? null,
-          customerPhone: order.customerPhone ?? null,
-          trackingId: order.trackingId ?? null,
-          courier: order.courier ?? null,
-          createdAt: new Date(),
-        },
-        update: {
-          userId: order.userId,
-          productId: order.productId,
-          status: order.status,
-          amount: order.amount,
-          costPrice: order.costPrice,
-          paymentScreenshotUrl: order.paymentScreenshotUrl ?? null,
-          shippingAddress: order.shippingAddress ?? null,
-          customerName: order.customerName ?? null,
-          customerPhone: order.customerPhone ?? null,
-          trackingId: order.trackingId ?? null,
-          courier: order.courier ?? null,
-        },
+      prisma.$transaction(async (tx) => {
+        await tx.order.upsert({
+          where: { adminId_id: { adminId, id: order.id } },
+          create: {
+            adminId,
+            id: order.id,
+            userId: order.userId,
+            productId: order.productId,
+            status: order.status,
+            amount: order.amount,
+            costPrice: order.costPrice,
+            paymentScreenshotUrl: order.paymentScreenshotUrl ?? null,
+            shippingAddress: order.shippingAddress ?? null,
+            customerName: order.customerName ?? null,
+            customerPhone: order.customerPhone ?? null,
+            trackingId: order.trackingId ?? null,
+            courier: order.courier ?? null,
+            createdAt: new Date(),
+          },
+          update: {
+            userId: order.userId,
+            productId: order.productId,
+            status: order.status,
+            amount: order.amount,
+            costPrice: order.costPrice,
+            paymentScreenshotUrl: order.paymentScreenshotUrl ?? null,
+            shippingAddress: order.shippingAddress ?? null,
+            customerName: order.customerName ?? null,
+            customerPhone: order.customerPhone ?? null,
+            trackingId: order.trackingId ?? null,
+            courier: order.courier ?? null,
+          },
+        });
       })
     );
   },
@@ -1112,10 +1117,12 @@ export const dbService = {
   // AUTH: Admin Credential Storage
   async registerAdmin(adminId: string, passwordHash: string) {
     await withRetry(() =>
-      prisma.admin.upsert({
-        where: { adminId },
-        create: { adminId, passwordHash },
-        update: { passwordHash },
+      prisma.$transaction(async (tx) => {
+        await tx.admin.upsert({
+          where: { adminId },
+          create: { adminId, passwordHash },
+          update: { passwordHash },
+        });
       })
     );
   },
@@ -1380,9 +1387,12 @@ export const dbService = {
   async getPurchases(adminId: string, from?: string, to?: string): Promise<any[]> {
     const where: any = { adminId };
     if (from && to) {
+      // Parse date strings as local (PKT) dates, not UTC
+      const [fy, fm, fd] = from.split('-').map(Number);
+      const [ty, tm, td] = to.split('-').map(Number);
       where.createdAt = {
-        gte: new Date(from),
-        lte: new Date(to + "T23:59:59.999Z"),
+        gte: new Date(fy, fm - 1, fd),
+        lte: new Date(ty, tm - 1, td, 23, 59, 59, 999),
       };
     }
     const records: any[] = await withRetry(() =>
@@ -1436,7 +1446,7 @@ export const dbService = {
 
     for (const p of products) {
       try {
-        await withRetry(() =>
+        const record = await withRetry(() =>
           prisma.product.create({
             data: {
               adminId,
@@ -1450,6 +1460,27 @@ export const dbService = {
             },
           })
         );
+
+        // Also create a Purchase record so Dashboard & Reports show inventory investment
+        const qty = p.stock || 0;
+        const unitCost = p.costPrice || 0;
+        if (qty > 0 && unitCost > 0) {
+          await withRetry(() =>
+            prisma.purchase.create({
+              data: {
+                adminId,
+                productName: p.name,
+                productId: record.id,
+                quantity: qty,
+                pricePerUnit: unitCost,
+                totalCost: unitCost * qty,
+                supplier: "Bulk Import",
+                note: `Auto-generated from bulk import of ${p.name}`,
+              },
+            })
+          );
+        }
+
         created++;
       } catch (err: any) {
         errors.push({ name: p.name, error: err.message });

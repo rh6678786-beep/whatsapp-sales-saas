@@ -23,6 +23,14 @@ export default function BulkImport() {
   const [result, setResult] = useState<{ created: number; errors: { name: string; error: string }[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [stockFilter, setStockFilter] = useState<'all' | 'inStock' | 'lowStock' | 'outOfStock'>('all');
+  const [sortConfig, setSortConfig] = useState<{ key: 'stock' | 'price' | 'name' | 'profit'; dir: 'asc' | 'desc' } | null>(null);
+
+  // Refs for auto-focus on Enter
+  const nameRef = useRef<HTMLInputElement>(null);
+  const priceRef = useRef<HTMLInputElement>(null);
+  const costPriceRef = useRef<HTMLInputElement>(null);
+  const stockRef = useRef<HTMLInputElement>(null);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -42,6 +50,8 @@ export default function BulkImport() {
     setFormFeatures([]);
     setFormImages([]);
     setEditingIndex(null);
+    // Auto-focus back to name for next product entry
+    nameRef.current?.focus();
   };
 
   const handleImagePick = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -156,7 +166,9 @@ export default function BulkImport() {
         }
       }
       if (res.data.errors?.length > 0) {
-        error(`${res.data.errors.length} products failed to save`);
+        const firstErr = res.data.errors[0];
+        const errMsg = firstErr.error || 'Unknown error';
+        error(`${res.data.errors.length} product(s) failed: ${firstErr.name} — ${errMsg}`);
       }
     } catch (err: any) {
       error(err.response?.data?.error || err.message || 'Failed to save products');
@@ -164,6 +176,46 @@ export default function BulkImport() {
       setSaving(false);
     }
   };
+
+  // Filtered + sorted products
+  const filteredProducts = (() => {
+    let filtered = [...products];
+
+    // Stock filter
+    if (stockFilter === 'inStock') {
+      filtered = filtered.filter(p => p.stock > 5);
+    } else if (stockFilter === 'lowStock') {
+      filtered = filtered.filter(p => p.stock > 0 && p.stock <= 5);
+    } else if (stockFilter === 'outOfStock') {
+      filtered = filtered.filter(p => p.stock === 0);
+    }
+
+    // Sort
+    if (sortConfig) {
+      filtered.sort((a, b) => {
+        let aVal: number;
+        let bVal: number;
+        if (sortConfig.key === 'stock') {
+          aVal = a.stock;
+          bVal = b.stock;
+        } else if (sortConfig.key === 'price') {
+          aVal = a.price;
+          bVal = b.price;
+        } else if (sortConfig.key === 'profit') {
+          aVal = a.price - a.costPrice;
+          bVal = b.price - b.costPrice;
+        } else {
+          aVal = a.name.localeCompare(b.name);
+          bVal = b.name.localeCompare(a.name);
+        }
+        if (aVal < bVal) return sortConfig.dir === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.dir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return filtered;
+  })();
 
   const totalCost = products.reduce((sum, p) => sum + p.price, 0);
   const totalInvestment = products.reduce((sum, p) => sum + p.costPrice, 0);
@@ -193,9 +245,11 @@ export default function BulkImport() {
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest ml-1">Product Name *</label>
             <input
+              ref={nameRef}
               type="text"
               value={formName}
               onChange={e => setFormName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); priceRef.current?.focus(); } }}
               placeholder="e.g. Smart Watch Pro"
               className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition-all"
             />
@@ -203,9 +257,11 @@ export default function BulkImport() {
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest ml-1">Sale Price (Rs.) *</label>
             <input
+              ref={priceRef}
               type="number"
               value={formPrice}
               onChange={e => setFormPrice(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); costPriceRef.current?.focus(); } }}
               placeholder="e.g. 5000"
               min="0"
               className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition-all"
@@ -214,9 +270,11 @@ export default function BulkImport() {
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest ml-1">Cost Price (Rs.)</label>
             <input
+              ref={costPriceRef}
               type="number"
               value={formCostPrice}
               onChange={e => setFormCostPrice(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); stockRef.current?.focus(); } }}
               placeholder="e.g. 3500"
               min="0"
               className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition-all"
@@ -225,15 +283,62 @@ export default function BulkImport() {
           <div className="space-y-1.5">
             <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest ml-1">Stock</label>
             <input
+              ref={stockRef}
               type="number"
               value={formStock}
               onChange={e => setFormStock(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddToList(); } }}
               placeholder="10"
               min="0"
               className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition-all"
             />
           </div>
         </div>
+
+        {/* Profit Analysis */}
+        {formPrice && formCostPrice && parseFloat(formPrice) > 0 && parseFloat(formCostPrice) > 0 && (() => {
+          const salePrice = parseFloat(formPrice);
+          const costPrice = parseFloat(formCostPrice);
+          const profit = salePrice - costPrice;
+          const profitPercent = (profit / costPrice) * 100;
+          const isHealthy = profitPercent >= 20;
+
+          return (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className={`mb-6 p-4 rounded-2xl border flex items-center justify-between transition-colors ${
+                isHealthy
+                  ? 'bg-emerald-50 dark:bg-emerald-500/5 border-emerald-100 dark:border-emerald-500/20'
+                  : profitPercent >= 0
+                    ? 'bg-amber-50 dark:bg-amber-500/5 border-amber-100 dark:border-amber-500/20'
+                    : 'bg-rose-50 dark:bg-rose-500/5 border-rose-100 dark:border-rose-500/20'
+              }`}
+            >
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Estimated Profit</p>
+                <p className={`text-xl font-black ${isHealthy ? 'text-emerald-500' : profitPercent >= 0 ? 'text-amber-500' : 'text-rose-500'}`}>
+                  {profit >= 0 ? 'Rs. ' : '-Rs. '}{Math.abs(profit).toLocaleString()}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">
+                  {profitPercent >= 20 ? 'Healthy Profit' : profitPercent >= 0 ? 'Low Profit' : 'Loss'}
+                </p>
+                <div className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-black mt-1 ${
+                  profitPercent >= 20
+                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                    : profitPercent >= 0
+                      ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                      : 'bg-rose-500 text-white shadow-lg shadow-rose-500/20'
+                }`}>
+                  {profit > 0 ? '+' : ''}
+                  {profitPercent.toFixed(1)}%
+                </div>
+              </div>
+            </motion.div>
+          );
+        })()}
 
         {/* Features */}
         <div className="mb-6">
@@ -317,7 +422,7 @@ export default function BulkImport() {
             animate={{ opacity: 1, y: 0 }}
             className="bg-white dark:bg-zinc-900 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden"
           >
-            <div className="p-6 pb-4 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between">
+            <div className="p-6 pb-4 border-b border-zinc-100 dark:border-zinc-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-bold text-zinc-900 dark:text-white">
                   Products Added ({products.length})
@@ -325,7 +430,32 @@ export default function BulkImport() {
                 <p className="text-xs text-zinc-500 mt-0.5">
                   Total Value: <span className="font-bold text-emerald-500">Rs. {totalCost.toLocaleString()}</span>
                   {' · '}Investment: <span className="font-bold text-zinc-500">Rs. {totalInvestment.toLocaleString()}</span>
+                  {stockFilter !== 'all' && (
+                    <span className="ml-2 text-violet-500">· Showing {filteredProducts.length}</span>
+                  )}
                 </p>
+              </div>
+              {/* Stock Filter Buttons */}
+              <div className="flex items-center gap-1.5">
+                {(['all', 'inStock', 'lowStock', 'outOfStock'] as const).map((option) => (
+                  <button
+                    key={option}
+                    onClick={() => { setStockFilter(option); }}
+                    className={`px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all ${
+                      stockFilter === option
+                        ? option === 'outOfStock'
+                          ? 'bg-red-500 text-white shadow-lg shadow-red-500/20'
+                          : option === 'lowStock'
+                            ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                            : option === 'inStock'
+                              ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
+                              : 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-lg'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                    }`}
+                  >
+                    {option === 'all' ? 'All' : option === 'inStock' ? 'In Stock' : option === 'lowStock' ? 'Low Stock' : 'Out of Stock'}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -334,16 +464,37 @@ export default function BulkImport() {
                 <thead>
                   <tr className="border-b border-zinc-100 dark:border-zinc-800">
                     <th className="text-left px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">#</th>
-                    <th className="text-left px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Product</th>
-                    <th className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Sale Price</th>
+                    <th
+                      className="text-left px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors select-none"
+                      onClick={() => setSortConfig(prev => prev?.key === 'name' && prev.dir === 'asc' ? { key: 'name', dir: 'desc' } : { key: 'name', dir: 'asc' })}
+                    >
+                      Product {sortConfig?.key === 'name' ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '⇅'}
+                    </th>
+                    <th
+                      className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors select-none"
+                      onClick={() => setSortConfig(prev => prev?.key === 'price' && prev.dir === 'asc' ? { key: 'price', dir: 'desc' } : { key: 'price', dir: 'asc' })}
+                    >
+                      Sale Price {sortConfig?.key === 'price' ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '⇅'}
+                    </th>
                     <th className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Cost</th>
-                    <th className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Stock</th>
+                    <th
+                      className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors select-none"
+                      onClick={() => setSortConfig(prev => prev?.key === 'profit' && prev.dir === 'asc' ? { key: 'profit', dir: 'desc' } : { key: 'profit', dir: 'asc' })}
+                    >
+                      Profit {sortConfig?.key === 'profit' ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '⇅'}
+                    </th>
+                    <th
+                      className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors select-none"
+                      onClick={() => setSortConfig(prev => prev?.key === 'stock' && prev.dir === 'asc' ? { key: 'stock', dir: 'desc' } : { key: 'stock', dir: 'asc' })}
+                    >
+                      Stock {sortConfig?.key === 'stock' ? (sortConfig.dir === 'asc' ? '↑' : '↓') : '⇅'}
+                    </th>
                     <th className="text-center px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Images</th>
                     <th className="text-right px-6 py-3 text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((p, i) => (
+                  {filteredProducts.map((p, i) => (
                     <motion.tr
                       key={p.id}
                       initial={{ opacity: 0, x: -10 }}
@@ -372,7 +523,36 @@ export default function BulkImport() {
                       <td className="px-6 py-4 text-right font-bold text-zinc-900 dark:text-white">Rs. {p.price.toLocaleString()}</td>
                       <td className="px-6 py-4 text-right text-zinc-500">Rs. {p.costPrice.toLocaleString()}</td>
                       <td className="px-6 py-4 text-right">
-                        <span className={`font-bold ${p.stock === 0 ? 'text-red-500' : 'text-zinc-700 dark:text-zinc-300'}`}>{p.stock}</span>
+                        {p.costPrice > 0 ? (() => {
+                          const profit = p.price - p.costPrice;
+                          const profitPercent = (profit / p.costPrice) * 100;
+                          const isHealthy = profitPercent >= 20;
+                          return (
+                            <div className="flex flex-col items-end">
+                              <span className={`font-bold text-sm ${isHealthy ? 'text-emerald-500' : profitPercent >= 0 ? 'text-amber-500' : 'text-rose-500'}`}>
+                                {profit >= 0 ? '+' : ''}Rs. {profit.toLocaleString()}
+                              </span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                isHealthy
+                                  ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                                  : profitPercent >= 0
+                                    ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400'
+                                    : 'bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400'
+                              }`}>
+                                {profit > 0 ? '+' : ''}{profitPercent.toFixed(1)}%
+                              </span>
+                            </div>
+                          );
+                        })() : <span className="text-zinc-400 text-xs">—</span>}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <span className={`font-bold ${
+                          p.stock === 0
+                            ? 'text-red-500'
+                            : p.stock <= 5
+                              ? 'text-amber-500'
+                              : 'text-emerald-500'
+                        }`}>{p.stock}</span>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <span className="text-xs text-zinc-400">{p.imagesPreviews.length} 📸</span>

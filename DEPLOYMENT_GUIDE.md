@@ -1,5 +1,64 @@
 # DEPLOYMENT GUIDE — Quick Start
 
+---
+
+## DDoS Protection — CloudFlare Setup (Free, 5 Minutes)
+
+CloudFlare provides free DDoS protection, SSL/TLS, and CDN for your domain.
+
+### Step 1: Sign Up & Add Site
+1. Go to https://cloudflare.com and create a free account
+2. Click **Add a Site** and enter your domain (e.g., `yourstore.com`)
+3. CloudFlare will scan your existing DNS records
+
+### Step 2: Configure DNS
+1. After the scan, review the DNS records CloudFlare found
+2. Make sure your A record points to your server IP
+3. Ensure **Proxy status** (orange cloud ☁️) is enabled for your domain — this activates DDoS protection
+   - ☁️ **Proxied** (orange) = DDoS protection, SSL, CDN active
+   - ⛅ **DNS only** (gray) = No protection
+
+### Step 3: Update Nameservers
+1. CloudFlare will show you two nameserver addresses (e.g., `dns1.cloudflare.com`, `dns2.cloudflare.com`)
+2. Go to your **domain registrar** (Namecheap, GoDaddy, etc.)
+3. Replace the existing nameservers with CloudFlare's
+4. Wait 5-10 minutes for propagation
+
+### Step 4: Enable SSL/TLS
+1. Go to **SSL/TLS** → **Overview**
+2. Set to **Full (strict)** — this encrypts traffic between CloudFlare and your server
+3. Go to **Edge Certificates** → enable:
+   - ✅ Always Use HTTPS
+   - ✅ Automatic HTTPS Rewrites
+   - ✅ HSTS (set to max-age=31536000, include subdomains)
+
+### Step 5: Security Settings
+1. Go to **Security** → **Settings**
+2. Set **Security Level** to **High** (challenge suspicious visitors)
+3. Enable **Bot Fight Mode** (blocks known bots)
+4. Go to **Speed** → **Optimization** → enable **Auto Minify** (HTML, CSS, JS)
+
+### Step 6: Configure Rate Limiting (Free Tier)
+1. Go to **Security** → **WAF** → **Rate Limiting Rules**
+2. Create a rule:
+   - **Rule name:** Auth Rate Limit
+   - **Requests:** 50
+   - **Time period:** 10 seconds
+   - **Action:** Block
+   - **Expression:** `(http.request.uri.path contains "/api/auth/" and http.request.uri.path ne "/api/auth/login")`
+
+### What CloudFlare Protects Against:
+- ✅ **DDoS attacks** (Layer 3/4/7)
+- ✅ **Brute force login attempts**
+- ✅ **SQL injection & XSS** (WAF)
+- ✅ **SSL/TLS termination**
+- ✅ **Bot traffic filtering**
+- ✅ **Caching & CDN** (faster global load times)
+
+> **Note:** The app already has built-in rate limiting (Helmet, express-rate-limit, CSRF). CloudFlare adds a second layer of defense at the network edge before traffic even reaches your server.
+
+---
+
 ## Prerequisites
 - Docker & Docker Compose installed
 - PostgreSQL 16+ (or use managed service like Supabase)

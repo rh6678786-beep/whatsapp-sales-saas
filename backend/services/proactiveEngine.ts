@@ -12,9 +12,13 @@ const log = createChildLogger("proactive:engine");
 // Track daily sent messages per customer (cleaned hourly)
 const DAILY_SENT_MAP = new Map<string, number>();
 
+function getLocalDateStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function getDailyKey(adminId: string, userId: string): string {
-  const date = new Date().toISOString().slice(0, 10);
-  return `${adminId}:${userId}:${date}`;
+  return `${adminId}:${userId}:${getLocalDateStr()}`;
 }
 
 function isQuietHours(cfg: any): boolean {
@@ -149,7 +153,7 @@ export async function processProactiveForAdmin(adminId: string): Promise<{
 }
 
 function clearDailyMap() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getLocalDateStr();
   for (const key of DAILY_SENT_MAP.keys()) {
     if (!key.startsWith(today)) {
       DAILY_SENT_MAP.delete(key);

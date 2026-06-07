@@ -1,4 +1,7 @@
 import crypto from "crypto";
+import { createChildLogger } from "./logger.js";
+
+const log = createChildLogger("encryption");
 
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
@@ -9,7 +12,27 @@ function getKey(): Buffer {
   if (!key) {
     throw new Error("ENCRYPTION_KEY environment variable is required for encrypting secrets at rest");
   }
+  
+  // Support raw 32-byte hex keys (64 hex chars) directly without SHA-256 derivation
+  // This allows operators to use a true 256-bit key directly
+  if (/^[0-9a-fA-F]{64}$/.test(key)) {
+    const rawKey = Buffer.from(key, 'hex');
+    return rawKey;
+  }
+  
+  // Support base64-encoded 32-byte keys
+  try {
+    const decoded = Buffer.from(key, 'base64');
+    if (decoded.length === 32) {
+      return decoded;
+    }
+  } catch {
+    // Not valid base64 — fall through to SHA-256 derivation
+  }
+  
   // Derive a 256-bit (32 byte) key from the env key using SHA-256
+  // This ensures any-length string becomes a valid 32-byte AES-256 key
+  log.info("Deriving encryption key via SHA-256 — consider using a raw 64-char hex key for stronger security");
   return crypto.createHash("sha256").update(key).digest();
 }
 

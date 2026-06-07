@@ -9,6 +9,7 @@ interface LoginProps {
 
 export default function Login({ onLogin }: LoginProps) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [loginMethod, setLoginMethod] = useState<'storeId' | 'email'>('storeId');
   const [step, setStep] = useState<'form' | 'otp'>('form');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -112,10 +113,13 @@ export default function Login({ onLogin }: LoginProps) {
 
     try {
       if (mode === 'login') {
-        const res = await axios.post('/api/auth/login', {
-          adminId: username || 'default-admin',
-          password
-        });
+        // If loginMethod is 'email', use login-by-email endpoint
+        const res = loginMethod === 'email'
+          ? await axios.post('/api/auth/login-by-email', { email, password })
+          : await axios.post('/api/auth/login', {
+              adminId: username || 'default-admin',
+              password
+            });
         if (res.data?.token) {
           localStorage.setItem('isAdmin', 'true');
           localStorage.setItem('adminId', res.data.adminId || username || 'default-admin');
@@ -332,20 +336,55 @@ export default function Login({ onLogin }: LoginProps) {
                 exit={{ opacity: 0, x: 30 }}
               >
                 <form onSubmit={handleSubmit} className="space-y-5">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-[2px] ml-1">Store ID</label>
-                    <div className="relative group">
-                      <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-emerald-400 transition-colors" />
-                      <input
-                        type="text"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        placeholder="e.g. zia-store"
-                        className="w-full pl-11 pr-4 py-3.5 bg-zinc-800/50 border-2 border-zinc-700/50 focus:border-emerald-500/40 rounded-xl outline-none transition-all text-sm font-medium text-white placeholder:text-zinc-600"
-                        required
-                      />
+                  {mode === 'login' && loginMethod === 'email' ? (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-[2px] ml-1">Email</label>
+                      <div className="relative group">
+                        <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-emerald-400 transition-colors" />
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="you@example.com"
+                          className="w-full pl-11 pr-4 py-3.5 bg-zinc-800/50 border-2 border-zinc-700/50 focus:border-emerald-500/40 rounded-xl outline-none transition-all text-sm font-medium text-white placeholder:text-zinc-600"
+                          required
+                        />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-[2px] ml-1">Store ID</label>
+                      <div className="relative group">
+                        <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-emerald-400 transition-colors" />
+                        <input
+                          type="text"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
+                          placeholder="e.g. zia-store"
+                          className="w-full pl-11 pr-4 py-3.5 bg-zinc-800/50 border-2 border-zinc-700/50 focus:border-emerald-500/40 rounded-xl outline-none transition-all text-sm font-medium text-white placeholder:text-zinc-600"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Login method toggle */}
+                  {mode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLoginMethod(loginMethod === 'storeId' ? 'email' : 'storeId');
+                        setError('');
+                      }}
+                      className="text-xs font-bold text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1.5 ml-1"
+                    >
+                      {loginMethod === 'storeId' ? (
+                        <>🔑 Forgot your Store ID? Login with email</>
+                      ) : (
+                        <>🏪 Login with Store ID instead</>
+                      )}
+                    </button>
+                  )}
 
                   {mode === 'register' && (
                     <>

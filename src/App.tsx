@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Signin from './components/Signin';
 import Signup from './components/Signup';
 import TeamLogin from './components/TeamLogin';
+import ResetPassword from './components/ResetPassword';
 import OnboardingWizard from './components/OnboardingWizard';
 import ErrorPage from './components/ErrorPage';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -35,9 +36,7 @@ function getAdminId(): string {
 
 function getAuthToken(): string | null {
   return sessionStorage.getItem('authToken');
-}
-
-// Clear all auth state
+}// Clear all auth state
 function clearAuth(): void {
   const keys = ['isAdmin', 'adminId', 'authToken', 'teamMember', 'activeMainTab', 'whatsappSubTab', 'productsSubTab', 'featuresSubTab', 'theme'];
   keys.forEach(k => {
@@ -160,6 +159,9 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [showSignup, setShowSignup] = useState(false);
   const [showTeamLogin, setShowTeamLogin] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(() => {
+    return new URLSearchParams(window.location.search).has('token');
+  });
   const [notifiedSessionIds, setNotifiedSessionIds] = useState<Set<string>>(new Set());
   const [pendingCount, setPendingCount] = useState(0);
   const [businessLogo, setBusinessLogo] = useState('');
@@ -184,6 +186,18 @@ export default function App() {
 
   const notifiedSessionIdsRef = useRef(notifiedSessionIds);
   notifiedSessionIdsRef.current = notifiedSessionIds;
+
+  // Listen for custom navigation events (e.g. from ProductManager's Bulk Import button)
+  React.useEffect(() => {
+    const handleNavigate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail && typeof detail === 'string') {
+        setActiveMainTab(detail as MainTab);
+      }
+    };
+    window.addEventListener('navigate-to', handleNavigate);
+    return () => window.removeEventListener('navigate-to', handleNavigate);
+  }, []);
 
   React.useEffect(() => {
     sessionStorage.setItem('activeMainTab', activeMainTab);
@@ -277,6 +291,13 @@ export default function App() {
   };
 
   if (!isAuthenticated) {
+    if (showResetPassword) {
+      return <QueryClientProvider client={queryClient}><ResetPassword onBackToLogin={() => {
+        window.history.replaceState(null, '', window.location.pathname);
+        setShowResetPassword(false);
+        setShowLogin(true);
+      }} /><React.Suspense fallback={null}><div><Toaster /></div></React.Suspense></QueryClientProvider>;
+    }
     if (showSignup) {
       return <QueryClientProvider client={queryClient}><Signup onSignup={handleLogin} onSignIn={() => { setShowSignup(false); setShowLogin(true); }} /><React.Suspense fallback={null}><div><Toaster /></div></React.Suspense></QueryClientProvider>;
     }

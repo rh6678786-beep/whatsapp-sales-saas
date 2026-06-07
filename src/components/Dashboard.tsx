@@ -160,7 +160,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         {[
           { label: 'Total Revenue', value: `Rs. ${(stats?.totalSales || 0).toLocaleString()}`, icon: Banknote, color: 'text-zinc-900 dark:text-white', bg: 'bg-zinc-50 dark:bg-zinc-800/50', iconBg: 'bg-white dark:bg-zinc-800 border-zinc-100 dark:border-zinc-700' },
-          { label: 'Today\'s Profit', value: `Rs. ${(stats?.todayProfit || 0).toLocaleString()}`, icon: TrendingUp, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50/30 dark:bg-blue-900/10', iconBg: 'bg-white dark:bg-zinc-800 border-zinc-100 dark:border-zinc-700' },
+          { label: 'Net Profit', value: `Rs. ${Math.abs(stats?.totalProfit || 0).toLocaleString()}${(stats?.totalProfit ?? 0) < 0 ? ' (Loss)' : ''}`, icon: TrendingUp, color: (stats?.totalProfit ?? 0) < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400', bg: (stats?.totalProfit ?? 0) < 0 ? 'bg-rose-50/30 dark:bg-rose-900/10' : 'bg-blue-50/30 dark:bg-blue-900/10', iconBg: 'bg-white dark:bg-zinc-800 border-zinc-100 dark:border-zinc-700' },
           { label: 'Pending Verification', value: stats?.pendingPayments || 0, icon: ShoppingCart, color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50/30 dark:bg-amber-900/10', iconBg: 'bg-white dark:bg-zinc-800 border-zinc-100 dark:border-zinc-700' },
           { label: 'Confirmed Orders', value: stats?.totalOrders || 0, icon: Package, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50/30 dark:bg-emerald-900/10', iconBg: 'bg-white dark:bg-zinc-800 border-zinc-100 dark:border-zinc-700' },
         ].map((stat, i) => (

@@ -794,6 +794,18 @@ export default function Signup({ onSignup, onSignIn }: SignupProps) {
                   </div>
                   <h2 className="text-xl font-black text-zinc-900 dark:text-zinc-100">Choose Your Plan</h2>
                   <p className="text-sm text-zinc-500 dark:text-zinc-400 dark:text-zinc-500 font-medium mt-1">Start your 7-day free trial, no credit card needed</p>
+
+                  {/* Store ID Card */}
+                  <div className="mt-6 bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border-2 border-emerald-500/30 rounded-2xl p-5">
+                    <p className="text-[10px] font-bold text-emerald-500 uppercase tracking-[2px]">Your Store ID</p>
+                    <p className="text-2xl font-black text-zinc-900 dark:text-white mt-1 tracking-tight">
+                      {name.toLowerCase().replace(/\s+/g, '-')}
+                    </p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed">
+                      🔑 Save this! You'll need this <strong>Store ID</strong> to sign in later.
+                      We've also sent it to <strong>{email}</strong>.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="space-y-3">

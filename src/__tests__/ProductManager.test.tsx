@@ -355,6 +355,17 @@ describe("ProductManager", () => {
       render(<ProductManager />);
 
       await waitFor(() => {
+        expect(screen.getByText("Smart Watch X1")).toBeTruthy();
+      });
+
+      // Click the 3-dots menu button to open dropdown with Select All option
+      const user = userEvent.setup();
+      const menuButtons = document.querySelectorAll('button[title="Bulk Actions"]');
+      if (menuButtons.length > 0) {
+        await user.click(menuButtons[0]);
+      }
+
+      await waitFor(() => {
         expect(screen.getByText("Select All")).toBeTruthy();
       });
     });

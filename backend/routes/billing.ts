@@ -8,9 +8,48 @@ import {
 } from "../services/stripeService.js";
 import { env } from "../lib/env.js";
 import { createChildLogger } from "../lib/logger.js";
+import crypto from "crypto";
 
 const log = createChildLogger("route:billing");
 const router = Router();
+
+// Simple in-memory idempotency store for Stripe webhooks
+// Key: idempotency-key header value, Value: { result, expiresAt }
+// Cleaned up every hour to prevent memory leaks
+const IDEMPOTENCY_CACHE = new Map<string, { result: any; expiresAt: number }>();
+const IDEMPOTENCY_TTL = 60 * 60 * 1000; // 1 hour
+
+// Periodic cleanup of expired idempotency keys
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of IDEMPOTENCY_CACHE) {
+    if (entry.expiresAt < now) {
+      IDEMPOTENCY_CACHE.delete(key);
+    }
+  }
+}, 60 * 60 * 1000); // Clean every hour
+
+/**
+ * Check if a request has already been processed via its idempotency key.
+ * Returns cached result if found, null otherwise.
+ */
+function checkIdempotency(key: string): any | null {
+  const cached = IDEMPOTENCY_CACHE.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
+  }
+  return null;
+}
+
+/**
+ * Store the result for a given idempotency key.
+ */
+function setIdempotency(key: string, result: any): void {
+  IDEMPOTENCY_CACHE.set(key, {
+    result,
+    expiresAt: Date.now() + IDEMPOTENCY_TTL,
+  });
+}
 
 router.get("/billing/plans", (_req, res) => {
   res.json(SUBSCRIPTION_PLANS);
@@ -161,6 +200,17 @@ router.post("/billing/webhook", async (req: any, res) => {
     return;
   }
 
+  // Check idempotency key to prevent duplicate webhook processing
+  const idempotencyKey = req.headers["idempotency-key"] as string
+    || req.headers["stripe-idempotency-key"] as string
+    || `${sig}:${webhookSecret.slice(0, 8)}`;
+  const cachedResult = checkIdempotency(idempotencyKey);
+  if (cachedResult) {
+    log.info({ key: idempotencyKey.slice(0, 12) }, "Duplicate webhook detected via idempotency key — returning cached result");
+    res.json(cachedResult);
+    return;
+  }
+
   try {
     const rawBody = req.rawBody || JSON.stringify(req.body);
     const event = await handleWebhook(rawBody, sig, webhookSecret);
@@ -170,7 +220,10 @@ router.post("/billing/webhook", async (req: any, res) => {
       log.info({ adminId: event.adminId, type: event.type }, "Subscription updated via webhook");
     }
 
-    res.json({ received: true });
+    const response = { received: true };
+    // Cache the result using the idempotency key
+    setIdempotency(idempotencyKey, response);
+    res.json(response);
   } catch (error: any) {
     log.error({ err: error }, "Stripe webhook handler error");
     res.status(400).json({ error: error.message });

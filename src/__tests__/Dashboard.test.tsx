@@ -90,8 +90,8 @@ describe("Dashboard", () => {
         expect(screen.getByText(/Rs\.\s*450,000/)).toBeTruthy();
       });
 
-      expect(screen.getByText("Today's Profit")).toBeTruthy();
-      expect(screen.getByText(/Rs\.\s*12,500/)).toBeTruthy();
+      expect(screen.getByText("Net Profit")).toBeTruthy();
+      expect(screen.getByText(/Rs\.\s*180,000/)).toBeTruthy();
       expect(screen.getByText("Pending Verification")).toBeTruthy();
       expect(screen.getByText("7")).toBeTruthy();
       expect(screen.getByText("Confirmed Orders")).toBeTruthy();

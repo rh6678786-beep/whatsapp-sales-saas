@@ -16,3 +16,5 @@ generated/
 settings.json
 mock_products.json
 fetch_grep.txt
+nul
+test-upload.png

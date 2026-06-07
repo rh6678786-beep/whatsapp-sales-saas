@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
-import { Eye, EyeOff, User, Lock, TrendingUp, DollarSign, Users, Smartphone, Briefcase, Package, ShoppingBag, MessageSquare, Bell, ChevronRight, ArrowRight, Rocket } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Eye, EyeOff, User, Lock, TrendingUp, DollarSign, Users, Smartphone, Briefcase, Package, ShoppingBag, MessageSquare, Bell, ChevronRight, ArrowRight, Rocket, Mail, KeyRound, CheckCircle, X } from 'lucide-react';
 import axios from 'axios';
 
 interface SigninProps {
@@ -14,6 +14,17 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Email login mode
+  const [loginMethod, setLoginMethod] = useState<'storeId' | 'email'>('storeId');
+  const [email, setEmail] = useState('');
+
+  // Forgot Password modal
+  const [showForgotPw, setShowForgotPw] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [forgotError, setForgotError] = useState('');
 
   useEffect(() => {
     const stored = localStorage.getItem('theme');
@@ -43,10 +54,12 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
     setLoading(true);
     setError('');
     try {
-      const res = await axios.post('/api/auth/login', {
-        adminId: storeId || 'default-admin',
-        password,
-      });
+      const res = loginMethod === 'email'
+        ? await axios.post('/api/auth/login-by-email', { email, password })
+        : await axios.post('/api/auth/login', {
+            adminId: storeId || 'default-admin',
+            password,
+          });
       if (res.data?.token) {
         sessionStorage.setItem('isAdmin', 'true');
         sessionStorage.setItem('adminId', res.data.adminId || storeId || 'default-admin');
@@ -67,6 +80,26 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail.trim()) {
+      setForgotError('Please enter your email');
+      return;
+    }
+    setForgotLoading(true);
+    setForgotError('');
+    setForgotSuccess(false);
+    try {
+      await axios.post('/api/auth/forgot-password', { email: forgotEmail });
+      setForgotSuccess(true);
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || 'Failed to process request';
+      setForgotError(msg);
+    } finally {
+      setForgotLoading(false);
     }
   };
 
@@ -271,21 +304,53 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
           <p className="text-sm text-zinc-500 dark:text-zinc-400 font-medium mt-2 mb-10 text-center">Sign in to your dashboard</p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Store ID */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[2px] ml-1">Store ID</label>
-              <div className="relative group">
-                <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500 group-focus-within:text-emerald-500 transition-colors" />
-                <input
-                  type="text"
-                  value={storeId}
-                  onChange={(e) => setStoreId(e.target.value)}
-                  placeholder="e.g. zia-store"
-                  className="w-full pl-11 pr-4 py-3.5 bg-white dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-emerald-400 rounded-2xl outline-none transition-all text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 shadow-sm"
-                  required
-                />
+            {loginMethod === 'email' ? (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[2px] ml-1">Email</label>
+                <div className="relative group">
+                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500 group-focus-within:text-emerald-500 transition-colors" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    className="w-full pl-11 pr-4 py-3.5 bg-white dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-emerald-400 rounded-2xl outline-none transition-all text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 shadow-sm"
+                    required
+                  />
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[2px] ml-1">Store ID</label>
+                <div className="relative group">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500 group-focus-within:text-emerald-500 transition-colors" />
+                  <input
+                    type="text"
+                    value={storeId}
+                    onChange={(e) => setStoreId(e.target.value)}
+                    placeholder="e.g. zia-store"
+                    className="w-full pl-11 pr-4 py-3.5 bg-white dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-emerald-400 rounded-2xl outline-none transition-all text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 shadow-sm"
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Login method toggle */}
+            <button
+              type="button"
+              onClick={() => {
+                setLoginMethod(loginMethod === 'storeId' ? 'email' : 'storeId');
+                setError('');
+              }}
+              className="text-xs font-bold text-emerald-500 hover:text-emerald-600 transition-colors flex items-center gap-1.5 ml-1"
+            >
+              {loginMethod === 'storeId' ? (
+                <>🔑 Forgot your Store ID? Login with email</>
+              ) : (
+                <>🏪 Login with Store ID instead</>
+              )}
+            </button>
 
             {/* Password */}
             <div className="space-y-1.5">
@@ -308,6 +373,17 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
                   {showPw ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
                 </button>
               </div>
+            </div>
+
+            {/* Forgot Password link */}
+            <div className="flex justify-end -mt-2">
+              <button
+                type="button"
+                onClick={() => { setShowForgotPw(true); setForgotEmail(''); setForgotError(''); setForgotSuccess(false); }}
+                className="text-xs font-bold text-emerald-500 hover:text-emerald-600 transition-colors"
+              >
+                Forgot Password?
+              </button>
             </div>
 
             {error && (
@@ -350,6 +426,110 @@ export default function Signin({ onSignin, onSignUp }: SigninProps) {
               </button>
             </p>
           </form>
+
+          {/* Forgot Password Modal */}
+          <AnimatePresence>
+            {showForgotPw && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+                onClick={() => setShowForgotPw(false)}
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-md bg-white dark:bg-zinc-900 rounded-3xl p-8 shadow-2xl border border-zinc-200 dark:border-zinc-700"
+                >
+                  {forgotSuccess ? (
+                    <div className="text-center">
+                      <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-950/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <CheckCircle className="w-7 h-7 text-emerald-500" />
+                      </div>
+                      <h3 className="text-lg font-black text-zinc-900 dark:text-zinc-100 mb-2">Check Your Email</h3>
+                      <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                        If an account exists with <strong className="text-zinc-700 dark:text-zinc-300">{forgotEmail}</strong>,
+                        a password reset link has been sent. It expires in 1 hour.
+                      </p>
+                      <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-4">
+                        (For local dev, check the server logs for the reset link)
+                      </p>
+                      <button
+                        onClick={() => setShowForgotPw(false)}
+                        className="mt-6 w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-500/25"
+                      >
+                        Back to Sign In
+                      </button>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleForgotPassword} className="space-y-5">
+                      <div className="text-center">
+                        <div className="w-14 h-14 bg-amber-100 dark:bg-amber-950/50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                          <KeyRound className="w-7 h-7 text-amber-500" />
+                        </div>
+                        <h3 className="text-lg font-black text-zinc-900 dark:text-zinc-100 mb-1">Forgot Password?</h3>
+                        <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                          Enter your email and we'll send you a reset link.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[2px] ml-1">Email Address</label>
+                        <div className="relative group">
+                          <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 dark:text-zinc-500 group-focus-within:text-emerald-500 transition-colors" />
+                          <input
+                            type="email"
+                            value={forgotEmail}
+                            onChange={(e) => setForgotEmail(e.target.value)}
+                            placeholder="you@example.com"
+                            className="w-full pl-11 pr-4 py-3.5 bg-white dark:bg-zinc-800 border-2 border-zinc-200 dark:border-zinc-700 focus:border-emerald-400 rounded-2xl outline-none transition-all text-sm font-medium text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500 shadow-sm"
+                            required
+                            autoFocus
+                          />
+                        </div>
+                      </div>
+
+                      {forgotError && (
+                        <motion.p
+                          initial={{ opacity: 0, y: -8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="text-red-500 text-sm font-bold bg-red-50 dark:bg-red-950/50 border border-red-100 dark:border-red-900 py-3 px-4 rounded-2xl"
+                        >
+                          {forgotError}
+                        </motion.p>
+                      )}
+
+                      <motion.button
+                        type="submit"
+                        disabled={forgotLoading}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        className="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-2xl font-black text-sm shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                      >
+                        {forgotLoading ? (
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          'Send Reset Link'
+                        )}
+                      </motion.button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowForgotPw(false)}
+                        className="w-full text-center text-sm font-bold text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-400 transition-colors"
+                      >
+                        ← Back to Sign In
+                      </button>
+                    </form>
+                  )}
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
       </div>  
     </div>

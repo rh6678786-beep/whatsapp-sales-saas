@@ -53,6 +53,10 @@ model Admin {
   deals         Deal[]
   dripCampaigns DripCampaign[]
   purchases     Purchase[]
+
+  @@index([verifiedEmail])
+  @@index([email])
+  @@index([adminId, storeName])
 }
 
 // 2. Products Catalog Table

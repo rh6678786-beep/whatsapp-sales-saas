@@ -75,6 +75,68 @@ router.get("/sessions/:id/messages", async (req, res) => {
   }
 });
 
+/**
+ * REVOKE SESSION — force-logout a specific user session.
+ * Blocks the session and clears its auth state.
+ */
+router.post("/sessions/:id/revoke", async (req, res) => {
+  try {
+    const adminId = getAdminId(req);
+    const sessionId = req.params.id;
+
+    // Block the session to prevent further messages
+    await dbService.updateSession(adminId, sessionId, {
+      isBlocked: true,
+      metadata: {
+        revokedAt: new Date().toISOString(),
+        revokedBy: adminId,
+      },
+    });
+
+    logAction(adminId, "revoke_session", "session", sessionId, { reason: req.body?.reason || "Manual revocation" }, req.ip)
+      .catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
+
+    log.info({ adminId, sessionId }, "Session revoked");
+    res.json({ success: true, message: "Session revoked successfully" });
+  } catch (error: any) {
+    log.error({ err: error, adminId: getAdminId(req), sessionId: req.params.id }, "Session revocation failed");
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * REVOKE ALL SESSIONS — force-logout all sessions for this admin.
+ */
+router.post("/sessions/revoke-all", async (req, res) => {
+  try {
+    const adminId = getAdminId(req);
+
+    // Block all active sessions
+    const sessions = await dbService.getRecentSessions(adminId, 1000);
+    let revokedCount = 0;
+    for (const session of sessions) {
+      await dbService.updateSession(adminId, session.id, {
+        isBlocked: true,
+        metadata: {
+          ...(session.metadata || {}),
+          revokedAt: new Date().toISOString(),
+          revokedBy: adminId,
+        },
+      });
+      revokedCount++;
+    }
+
+    logAction(adminId, "revoke_all_sessions", "session", "all", { count: revokedCount }, req.ip)
+      .catch((auditErr) => log.warn({ err: auditErr, adminId }, "Audit log write failed"));
+
+    log.info({ adminId, revokedCount }, "All sessions revoked");
+    res.json({ success: true, revokedCount });
+  } catch (error: any) {
+    log.error({ err: error, adminId: getAdminId(req) }, "Revoke all sessions failed");
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.patch("/sessions/:id", async (req, res) => {
   try {
     const adminId = getAdminId(req);

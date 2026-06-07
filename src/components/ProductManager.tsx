@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Product } from '../types';
 import { toast } from 'react-hot-toast';
-import { Plus, Trash2, Edit2, Package, Banknote, ListChecks, X, Sparkles, ShoppingBag, Save, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
+import { Plus, Trash2, Edit2, Package, Banknote, ListChecks, X, Sparkles, ShoppingBag, Save, ChevronLeft, ChevronRight, Upload, MoreVertical } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TableSkeleton } from './Skeleton';
 import Pagination from './Pagination';
@@ -127,7 +127,22 @@ export default function ProductManager() {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'inStock' | 'outOfStock'>('all');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const LIMIT = 20;
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [menuOpen]);
 
   const fetchProducts = async (p?: number, searchTerm?: string, stock?: string) => {
     try {
@@ -305,7 +320,7 @@ export default function ProductManager() {
             <span className="relative z-10">Add New Product</span>
           </button>
           <button 
-            onClick={() => window.location.hash = '#/bulk-import'}
+            onClick={() => window.dispatchEvent(new CustomEvent('navigate-to', { detail: 'bulk-import' }))}
             className="group relative px-6 py-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-2xl font-bold transition-all hover:scale-105 active:scale-95 shadow-md flex items-center gap-3 overflow-hidden"
           >
             <Upload className="w-5 h-5 relative z-10" /> 
@@ -317,16 +332,72 @@ export default function ProductManager() {
       {/* Selection & Filter Controls */}
       <div className="flex items-center justify-between -mt-4">
         <div className="flex items-center gap-2">
+          {/* 3-dots dropdown menu */}
           {products.length > 0 && (
-            <label className="flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-zinc-800 rounded-xl cursor-pointer hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
-              <input
-                type="checkbox"
-                checked={products.length > 0 && selectedIds.size === products.length}
-                onChange={toggleSelectAll}
-                className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-blue-500 focus:ring-blue-500 focus:ring-offset-0 cursor-pointer"
-              />
-              <span className="text-xs font-bold text-zinc-500 dark:text-zinc-400">Select All</span>
-            </label>
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen(prev => !prev)}
+                className="p-2 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 rounded-xl transition-colors active:scale-90"
+                title="Bulk Actions"
+              >
+                <MoreVertical className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
+              </button>
+
+              <AnimatePresence>
+                {menuOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, y: -5 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: -5 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute left-0 top-full mt-1.5 w-56 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-xl z-40 overflow-hidden"
+                  >
+                    {/* Select All / Deselect All */}
+                    <button
+                      onClick={() => { toggleSelectAll(); setMenuOpen(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-sm font-bold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors"
+                    >
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                        selectedIds.size === products.length
+                          ? 'bg-blue-500 border-blue-500'
+                          : 'border-zinc-300 dark:border-zinc-600'
+                      }`}>
+                        {selectedIds.size === products.length && (
+                          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </div>
+                      {selectedIds.size === products.length ? 'Deselect All' : 'Select All'}
+                      {selectedIds.size === products.length && products.length > 0 && (
+                        <span className="text-[10px] text-zinc-400 ml-auto">({products.length})</span>
+                      )}
+                    </button>
+
+                    <div className="mx-3 h-px bg-zinc-100 dark:bg-zinc-800" />
+
+                    {/* Delete Selected */}
+                    <button
+                      onClick={() => { if (selectedIds.size > 0) { handleBatchDelete(); } setMenuOpen(false); }}
+                      disabled={selectedIds.size === 0}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-bold transition-colors ${
+                        selectedIds.size > 0
+                          ? 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'
+                          : 'text-zinc-300 dark:text-zinc-600 cursor-not-allowed'
+                      }`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete Selected
+                      {selectedIds.size > 0 && (
+                        <span className="ml-auto text-[10px] bg-red-100 dark:bg-red-900/30 text-red-500 px-2 py-0.5 rounded-full">
+                          {selectedIds.size}
+                        </span>
+                      )}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -413,6 +484,18 @@ export default function ProductManager() {
                     <span className="text-[10px] uppercase tracking-widest opacity-60">Cost:</span>
                     <span className="text-sm">Rs. {product.costPrice?.toLocaleString() || '0'}</span>
                   </div>
+                  {product.stock !== undefined && (
+                    <div className={`inline-flex items-center gap-1.5 font-bold px-3 py-1.5 rounded-xl border ${
+                      product.stock === 0
+                        ? 'text-rose-500 bg-rose-50 dark:bg-rose-500/10 border-rose-100 dark:border-rose-500/20'
+                        : product.stock <= 5
+                          ? 'text-amber-500 bg-amber-50 dark:bg-amber-500/10 border-amber-100 dark:border-amber-500/20'
+                          : 'text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-100 dark:border-emerald-500/20'
+                    }`}>
+                      <span className="text-[10px] uppercase tracking-widest opacity-60">Stock:</span>
+                      <span className="text-sm">{product.stock}</span>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="space-y-2.5">

@@ -126,18 +126,22 @@ describe("Login", () => {
       expect(passwordInput).toHaveAttribute("type", "password");
 
       const user = userEvent.setup();
-      const toggleBtn = screen.getAllByRole("button").find(
-        (b) => b.innerHTML.includes("eye") || b.querySelector(".lucide-eye")
-      );
 
-      // Find the eye toggle button by its parent's button type
-      const showBtn = document.querySelector('button[type="button"]') as HTMLElement;
-      if (showBtn) {
-        await user.click(showBtn);
-        expect(passwordInput).toHaveAttribute("type", "text");
-        await user.click(showBtn);
-        expect(passwordInput).toHaveAttribute("type", "password");
+      // Find the password visibility toggle button (has Eye icon inside)
+      const allButtons = document.querySelectorAll('button');
+      let showBtn: HTMLElement | null = null;
+      for (const btn of allButtons) {
+        if (btn.innerHTML.includes('lucide-eye') || btn.innerHTML.includes('Eye')) {
+          showBtn = btn;
+          break;
+        }
       }
+
+      expect(showBtn).not.toBeNull();
+      await user.click(showBtn!);
+      expect(passwordInput).toHaveAttribute("type", "text");
+      await user.click(showBtn!);
+      expect(passwordInput).toHaveAttribute("type", "password");
     });
   });
 

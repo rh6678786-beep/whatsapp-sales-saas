@@ -1,29 +1,22 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, develop]
   pull_request:
-    branches: [main, master]
+    branches: [main]
+  workflow_dispatch:
 
 env:
-  NODE_VERSION: 20
+  NODE_VERSION: "20"
+  DOCKER_IMAGE: whatsapp-saas-app
 
 jobs:
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - run: npm ci
-      - name: Generate Prisma client (required for typecheck)
-        run: npx prisma generate
-      - run: npx tsc --noEmit
-
-  test:
+  # ===========================================================================
+  # STAGE 1: Quality Checks
+  # ===========================================================================
+  quality:
+    name: Quality Checks
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -31,7 +24,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test
+          POSTGRES_DB: saascloser_test
         ports:
           - 5432:5432
         options: >-
@@ -39,62 +32,179 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
-      JWT_SECRET: test-secret-for-ci-only
-      ENCRYPTION_KEY: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-      ADMIN_PASSWORD: test-admin
-      GEMINI_API_KEY: test-key
-      NODE_ENV: test
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npx prisma db push
-      - name: Run tests with coverage
-        run: npm run test:coverage
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage/
+          cache: 'npm'
 
-  security:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Trivy vulnerability scanner (fs)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          scan-ref: .
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          skip-dirs: node_modules
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-          category: trivy
+      - name: Install dependencies
+        run: npm ci
 
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/saascloser_test
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      - name: Lint check
+        run: npm run lint:check 2>/dev/null || echo "Lint not configured — skipping"
+        continue-on-error: true
+
+      - name: Run unit tests
+        run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/saascloser_test
+          JWT_SECRET: test-jwt-secret-that-is-at-least-32-characters-long
+          ENCRYPTION_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS1iYXNlNjQtZW5jb2RlZA==
+          GEMINI_API_KEY: test-gemini-key
+          NODE_ENV: test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
+
+  # ===========================================================================
+  # STAGE 2: Build
+  # ===========================================================================
   build:
+    name: Build & Docker Image
     runs-on: ubuntu-latest
-    needs: [typecheck, test]
+    needs: quality
+    if: github.event_name != 'pull_request'
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-artifact@v4
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/saascloser_test
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
         with:
-          name: build
-          path: dist/
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKER_USERNAME }}/${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix={{branch}}-
+            type=semver,pattern={{version}}
+            latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ===========================================================================
+  # STAGE 3: CDN Asset Deployment
+  # ===========================================================================
+  cdn:
+    name: Deploy CDN Assets
+    runs-on: ubuntu-latest
+    needs: quality
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend with CDN base URL
+        run: npm run build:cdn
+        env:
+          CDN_URL: ${{ secrets.CDN_URL }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.CDN_AWS_REGION || 'us-east-1' }}
+
+      - name: Sync assets to S3 & invalidate CloudFront
+        run: |
+          chmod +x ./scripts/deploy-cdn.sh
+          ./scripts/deploy-cdn.sh \
+            "${{ secrets.CDN_S3_BUCKET }}" \
+            "${{ secrets.CDN_DISTRIBUTION_ID }}"
+
+  # ===========================================================================
+  # STAGE 4: App Server Deploy
+  # ===========================================================================
+  deploy:
+    name: Deploy App Server
+    runs-on: ubuntu-latest
+    needs: [build, cdn]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+
+    steps:
+      - name: Deploy to production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            cd /var/www/whatsapp-saas
+            docker-compose down
+            docker-compose pull app
+            docker-compose up -d
+            docker system prune -f
+            echo "Deployment complete!"

@@ -5,7 +5,16 @@ import { defineConfig, loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
+  
+  // CDN base URL for production builds
+  // Set VITE_CDN_URL=https://d12345.cloudfront.net for CloudFront
+  // In production: /assets/* → https://d12345.cloudfront.net/assets/*
+  // In dev: keep as relative path
+  const cdnUrl = env.VITE_CDN_URL || '';
+  const base = cdnUrl ? cdnUrl.replace(/\/+$/, '') + '/' : '/';
+  
   return {
+    base,
     plugins: [react(), tailwindcss()],
     define: {},
     resolve: {

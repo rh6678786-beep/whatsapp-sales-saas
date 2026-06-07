@@ -30,19 +30,26 @@ interface PurchaseReportData {
   }>;
 }
 
+function getLocalDateStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 type ReportTab = 'sale' | 'purchase';
 
 export default function ReportManager() {
-  const [reportTab, setReportTab] = useState<ReportTab>('sale');
-  const [fromDate, setFromDate] = useState(() => localStorage.getItem('reportFromDate') || new Date().toISOString().split('T')[0]);
-  const [toDate, setToDate] = useState(() => localStorage.getItem('reportToDate') || new Date().toISOString().split('T')[0]);
+  const [reportTab, setReportTab] = useState<ReportTab>(() => {
+    return (localStorage.getItem('reportTab') as ReportTab) || 'sale';
+  });
+  const [fromDate, setFromDate] = useState(() => localStorage.getItem('reportFromDate') || getLocalDateStr());
+  const [toDate, setToDate] = useState(() => localStorage.getItem('reportToDate') || getLocalDateStr());
   const [saleReport, setSaleReport] = useState<ReportData | null>(null);
   const [purchaseReport, setPurchaseReport] = useState<PurchaseReportData | null>(null);
   const [loading, setLoading] = useState(false);
   const [noDataError, setNoDataError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateStr();
 
   useEffect(() => {
     if (errorMessage) {
@@ -51,13 +58,24 @@ export default function ReportManager() {
     }
   }, [errorMessage]);
 
+  // Persist reportTab in localStorage so it survives page refresh
+  useEffect(() => {
+    localStorage.setItem('reportTab', reportTab);
+  }, [reportTab]);
+
   useEffect(() => {
     const pendingFrom = localStorage.getItem('pendingReportFrom');
     const pendingTo = localStorage.getItem('pendingReportTo');
+    const pendingTab = localStorage.getItem('pendingReportTab') as ReportTab | null;
 
     if (pendingFrom && pendingTo) {
       localStorage.removeItem('pendingReportFrom');
       localStorage.removeItem('pendingReportTo');
+      localStorage.removeItem('pendingReportTab');
+      // Restore the tab that was active when user clicked generate
+      if (pendingTab && pendingTab !== reportTab) {
+        setReportTab(pendingTab);
+      }
       setTimeout(() => {
         generateReport(pendingFrom, pendingTo);
       }, 300);
@@ -135,15 +153,86 @@ export default function ReportManager() {
     }
     if (!fromDate || !toDate) return;
 
+    // Keep localStorage for backward compatibility (in case page DOES reload)
     localStorage.setItem('pendingReportFrom', fromDate);
     localStorage.setItem('pendingReportTo', toDate);
-    localStorage.removeItem('reportFromDate');
-    localStorage.removeItem('reportToDate');
-    window.location.reload();
+    localStorage.setItem('pendingReportTab', reportTab);
+    localStorage.setItem('reportFromDate', fromDate);
+    localStorage.setItem('reportToDate', toDate);
+    // Generate directly without page reload
+    generateReport();
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handleDownloadReport = () => {
+    if ((reportTab === 'sale' && !saleReport) || (reportTab === 'purchase' && !purchaseReport)) return;
+    const reportTitle = reportTab === 'sale' ? 'Sale Report' : 'Purchase Report';
+    const dateStr = `${fromDate} to ${toDate}`;
+
+    let html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>${reportTitle}</title>
+<style>
+  body { font-family: Arial, sans-serif; padding: 40px; color: #222; }
+  h1 { font-size: 24px; margin-bottom: 4px; }
+  .sub { color: #666; font-size: 14px; margin-bottom: 30px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+  th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #333; font-size: 11px; text-transform: uppercase; color: #555; }
+  td { padding: 10px 12px; border-bottom: 1px solid #ddd; font-size: 13px; }
+  .right { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #333; font-size: 15px; }
+  .summary { display: flex; gap: 20px; margin-bottom: 30px; }
+  .card { flex: 1; padding: 20px; border-radius: 12px; }
+  .card-label { font-size: 10px; text-transform: uppercase; color: #666; margin-bottom: 4px; }
+  .card-value { font-size: 22px; font-weight: bold; }
+  .red { color: #e53e3e; }
+  .green { color: #38a169; }
+  .blue { color: #3182ce; }
+</style></head><body>`;
+
+    if (reportTab === 'sale' && saleReport) {
+      html += `<h1>Profit Report</h1><p class="sub">${dateStr}</p>`;
+      html += `<div class="summary">
+        <div class="card" style="background:#f5f5f5;"><div class="card-label">Total Revenue</div><div class="card-value">Rs. ${saleReport.revenue.toLocaleString()}</div></div>
+        <div class="card" style="background:${saleReport.profit < 0 ? '#fff5f5' : '#ebf8ff'};"><div class="card-label">${saleReport.profit < 0 ? 'Net Loss' : 'Net Profit'}</div><div class="card-value ${saleReport.profit < 0 ? 'red' : 'blue'}">Rs. ${Math.abs(saleReport.profit).toLocaleString()}</div></div>
+        <div class="card" style="background:#f0fff4;"><div class="card-label">Orders Verified</div><div class="card-value green">${saleReport.orderCount}</div></div>
+      </div>`;
+      html += `<table>
+        <tr><th>Metric</th><th class="right">Amount</th></tr>
+        <tr><td>Gross Revenue</td><td class="right">Rs. ${saleReport.revenue.toLocaleString()}</td></tr>
+        <tr><td>Total Cost of Goods</td><td class="right red">- Rs. ${saleReport.cost.toLocaleString()}</td></tr>
+        <tr class="total-row"><td>${saleReport.profit < 0 ? 'Net Loss' : 'Net Profit'}</td><td class="right ${saleReport.profit < 0 ? 'red' : 'blue'}">Rs. ${Math.abs(saleReport.profit).toLocaleString()}</td></tr>
+        <tr><td>Margin</td><td class="right">${saleReport.revenue > 0 ? Math.round((saleReport.profit / saleReport.revenue) * 100) : 0}%</td></tr>
+        <tr><td>Avg Order Value</td><td class="right">Rs. ${saleReport.orderCount > 0 ? Math.round(saleReport.revenue / saleReport.orderCount).toLocaleString() : 0}</td></tr>
+      </table>`;
+    } else if (reportTab === 'purchase' && purchaseReport) {
+      html += `<h1>Purchase Report</h1><p class="sub">${dateStr}</p>`;
+      html += `<div class="summary">
+        <div class="card" style="background:#f5f5f5;"><div class="card-label">Total Inventory Cost</div><div class="card-value">Rs. ${purchaseReport.totalCost.toLocaleString()}</div></div>
+        <div class="card" style="background:#fffbeb;"><div class="card-label">Total Items</div><div class="card-value" style="color:#d97706;">${purchaseReport.totalItems}</div></div>
+        <div class="card" style="background:#ecfeff;"><div class="card-label">Records</div><div class="card-value" style="color:#06b6d4;">${purchaseReport.count}</div></div>
+      </div>`;
+      html += `<table>
+        <tr><th>Product</th><th class="right">Qty</th><th class="right">Price/Unit</th><th class="right">Total</th><th>Supplier</th><th class="right">Date</th></tr>`;
+      purchaseReport.purchases.forEach(p => {
+        html += `<tr><td>${p.productName}</td><td class="right">${p.quantity}</td><td class="right">Rs. ${p.pricePerUnit.toLocaleString()}</td><td class="right">Rs. ${p.totalCost.toLocaleString()}</td><td>${p.supplier || '-'}</td><td class="right">${new Date(p.createdAt).toLocaleDateString()}</td></tr>`;
+      });
+      html += `<tr class="total-row"><td colspan="3">Grand Total</td><td class="right">Rs. ${purchaseReport.totalCost.toLocaleString()}</td><td colspan="2"></td></tr>`;
+      html += `</table>`;
+      html += `<p style="margin-top:20px;color:#666;font-size:12px;">${purchaseReport.count} purchase records with ${purchaseReport.totalItems} total items</p>`;
+    }
+
+    html += `</body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${reportTab === 'sale' ? 'profit-report' : 'purchase-report'}-${fromDate}-to-${toDate}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Report downloaded successfully!');
   };
 
   return (
@@ -306,9 +395,9 @@ export default function ReportManager() {
                 <p className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-3">Total Revenue</p>
                 <p className="text-3xl font-black text-zinc-900 dark:text-white">Rs. {saleReport.revenue.toLocaleString()}</p>
               </div>
-              <div className="bg-blue-50/30 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/20 rounded-[2rem] p-8">
-                <p className="text-[10px] font-bold text-blue-400 dark:text-blue-500 uppercase tracking-[0.2em] mb-3">Net Profit</p>
-                <p className="text-3xl font-black text-blue-600 dark:text-blue-400">Rs. {saleReport.profit.toLocaleString()}</p>
+              <div className={`${saleReport.profit < 0 ? 'bg-rose-50/30 dark:bg-rose-900/10 border-rose-100 dark:border-rose-900/20' : 'bg-blue-50/30 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/20'} rounded-[2rem] p-8 border`}>
+                <p className={`text-[10px] font-bold uppercase tracking-[0.2em] mb-3 ${saleReport.profit < 0 ? 'text-rose-400 dark:text-rose-500' : 'text-blue-400 dark:text-blue-500'}`}>{saleReport.profit < 0 ? 'Net Loss' : 'Net Profit'}</p>
+                <p className={`text-3xl font-black ${saleReport.profit < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400'}`}>{saleReport.profit < 0 ? '-' : ''}Rs. {Math.abs(saleReport.profit).toLocaleString()}</p>
               </div>
               <div className="bg-emerald-50/30 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/20 rounded-[2rem] p-8">
                 <p className="text-[10px] font-bold text-emerald-400 dark:text-emerald-500 uppercase tracking-[0.2em] mb-3">Orders Verified</p>
@@ -322,7 +411,7 @@ export default function ReportManager() {
                   <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-1">Performance Summary</h2>
                   <p className="text-zinc-500">{new Date(saleReport.from).toLocaleDateString()} - {new Date(saleReport.to).toLocaleDateString()}</p>
                 </div>
-                <button onClick={handlePrint} className="p-4 bg-zinc-100 dark:bg-zinc-800 rounded-2xl hover:bg-zinc-200 transition-colors print:hidden">
+                <button onClick={handleDownloadReport} className="p-4 bg-zinc-100 dark:bg-zinc-800 rounded-2xl hover:bg-zinc-200 transition-colors" title="Download as HTML">
                   <Download className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                 </button>
               </div>
@@ -337,10 +426,10 @@ export default function ReportManager() {
                   <span className="text-xl font-bold text-rose-500">- Rs. {saleReport.cost.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between items-center py-6">
-                  <span className="text-xl font-black text-zinc-900 dark:text-white">Net Profit (Take Home)</span>
+                  <span className="text-xl font-black text-zinc-900 dark:text-white">{saleReport.profit < 0 ? 'Net Loss' : 'Net Profit'}</span>
                   <div className="text-right">
-                    <span className="text-3xl font-black text-blue-600 dark:text-blue-400">Rs. {saleReport.profit.toLocaleString()}</span>
-                    <p className="text-xs text-zinc-400 font-medium mt-1">Margin: {saleReport.revenue > 0 ? Math.round((saleReport.profit / saleReport.revenue) * 100) : 0}%</p>
+                    <span className={`text-3xl font-black ${saleReport.profit < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-blue-600 dark:text-blue-400'}`}>{saleReport.profit < 0 ? '-' : ''}Rs. {Math.abs(saleReport.profit).toLocaleString()}</span>
+                    <p className={`text-xs font-medium mt-1 ${saleReport.profit < 0 ? 'text-rose-400' : 'text-zinc-400'}`}>Margin: {saleReport.revenue > 0 ? Math.round((saleReport.profit / saleReport.revenue) * 100) : 0}%</p>
                   </div>
                 </div>
               </div>
@@ -387,7 +476,7 @@ export default function ReportManager() {
                   <h2 className="text-2xl font-bold text-zinc-900 dark:text-white mb-1">Purchase History</h2>
                   <p className="text-zinc-500">{new Date(purchaseReport.from).toLocaleDateString()} - {new Date(purchaseReport.to).toLocaleDateString()}</p>
                 </div>
-                <button onClick={handlePrint} className="p-4 bg-zinc-100 dark:bg-zinc-800 rounded-2xl hover:bg-zinc-200 transition-colors print:hidden">
+                <button onClick={handleDownloadReport} className="p-4 bg-zinc-100 dark:bg-zinc-800 rounded-2xl hover:bg-zinc-200 transition-colors" title="Download as HTML">
                   <Download className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                 </button>
               </div>

@@ -1,3 +1,6 @@
+// Set Pakistan timezone for consistent date handling throughout the app
+process.env.TZ = 'Asia/Karachi';
+
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
@@ -35,9 +38,20 @@ if (env.SENTRY_DSN) {
     dsn: env.SENTRY_DSN,
     environment: env.NODE_ENV,
     tracesSampleRate: env.NODE_ENV === "production" ? 0.1 : 0.5,
-    integrations: [Sentry.requestDataIntegration()],
+    profilesSampleRate: env.NODE_ENV === "production" ? 0.1 : 0.3,
+    integrations: [
+      Sentry.requestDataIntegration(),
+      Sentry.httpIntegration(),
+      // prismaIntegration may not be available in all Sentry SDK versions
+      // Wrapped to avoid breaking initialization if API changes
+      ...(typeof (Sentry as any).prismaIntegration === 'function'
+        ? [(Sentry as any).prismaIntegration()]
+        : []),
+    ],
+    attachStacktrace: true,
+    maxBreadcrumbs: 50,
   });
-  log.info("Sentry error tracking initialized");
+  log.info("Sentry error tracking + APM initialized");
 }
 
 /**
@@ -103,11 +117,11 @@ async function startServer() {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "blob:", "https:"],
+        scriptSrc: ["'self'", ...(env.CDN_URL ? [env.CDN_URL] : [])],
+        styleSrc: ["'self'", "'unsafe-inline'", ...(env.CDN_URL ? [env.CDN_URL] : [])],
+        imgSrc: ["'self'", "data:", "blob:", "https:", ...(env.CDN_URL ? [env.CDN_URL] : [])],
         connectSrc: ["'self'", "ws:", "wss:"],
-        fontSrc: ["'self'"],
+        fontSrc: ["'self'", ...(env.CDN_URL ? [env.CDN_URL] : [])],
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
@@ -147,14 +161,10 @@ async function startServer() {
   app.use(correlationId);
   app.use(requestLogger);
 
-  // Rate limiting — skip for webhook and health endpoints (supports /api and /api/v1)
-  app.use((req, res, next) => {
-    const path = req.path;
-    if (matchesApiPath(path, "/api/billing/webhook") || matchesApiPath(path, "/api/health")) {
-      next();
-    } else {
-      defaultRateLimiter(req, res, next);
-    }
+  // Rate limiting — only applies to /api routes, not Vite/static assets
+  app.use("/api", (req, res, next) => {
+    if (req.path === "/billing/webhook" || req.path === "/health") return next();
+    defaultRateLimiter(req, res, next);
   });
 
   // CSRF Protection — skip for:
