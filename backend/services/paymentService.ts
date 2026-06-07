@@ -1,6 +1,7 @@
 import axios from "axios";
 import { dbService } from "./dbService";
 import { encrypt, decrypt, isEncrypted } from "../lib/encryption.js";
+import { env } from "../lib/env.js";
 import { createChildLogger } from "../lib/logger.js";
 
 const log = createChildLogger("payment");
@@ -517,13 +518,13 @@ export async function verifyPaymentFromScreenshot(
 
   const settings = await dbService.getSettings(adminId);
 
-  if (!settings.geminiApiKey) {
+  if (!env.GEMINI_API_KEY) {
     return { verified: false, message: "AI not configured" };
   }
 
   try {
     const { GoogleGenAI } = await import("@google/genai");
-    const genAI = new GoogleGenAI({ apiKey: settings.geminiApiKey });
+    const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 
     const response = await genAI.models.generateContent({
       model: settings.geminiModel || "gemini-2.0-flash",
@@ -590,13 +591,14 @@ export async function analyzePaymentScreenshot(
   }
 
   const settings = await dbService.getSettings(adminId);
-  if (!settings.geminiApiKey) {
+
+  if (!env.GEMINI_API_KEY) {
     return { error: "AI not configured" };
   }
 
   try {
     const { GoogleGenAI } = await import("@google/genai");
-    const genAI = new GoogleGenAI({ apiKey: settings.geminiApiKey });
+    const genAI = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
 
     const expectedText = expectedAmount
       ? `Expected amount: Rs.${expectedAmount}. `

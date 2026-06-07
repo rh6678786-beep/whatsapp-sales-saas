@@ -110,7 +110,6 @@ function baseSession(overrides: Record<string, any> = {}) {
 
 function mockSettings(overrides: Record<string, any> = {}) {
   return {
-    geminiApiKey: "test-key",
     geminiModel: "gemini-2.0-flash",
     storeName: "Test Store",
     language: "ur",

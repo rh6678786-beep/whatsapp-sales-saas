@@ -70,7 +70,6 @@ export const memoryConfigSchema = z.object({
 
 export const updateSettingsSchema = z.object({
   storeName: z.string().min(1).max(100).optional(),
-  geminiApiKey: z.string().max(500).optional(),
   geminiModel: z.enum(['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-flash-latest']).optional(),
   language: z.enum(['ur', 'en', 'ar', 'hi', 'bn', 'es', 'fr', 'zh']).optional(),
   email: z.string().email().optional(),

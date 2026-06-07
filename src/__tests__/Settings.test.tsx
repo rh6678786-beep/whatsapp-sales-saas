@@ -17,7 +17,6 @@ function mockGetHealth() {
       return Promise.resolve({
         data: {
           storeName: "Test Store",
-          geminiApiKey: "test-key",
           geminiModel: "gemini-flash-latest",
           language: "ur",
           jazzCashNumber: "0300-1234567",
@@ -135,41 +134,6 @@ describe("Settings", () => {
   });
 
   describe("AI Engine", () => {
-    it("shows Gemini API key field", async () => {
-      render(<Settings />);
-
-      await waitFor(() => {
-        expect(
-          screen.getByPlaceholderText("Enter your Gemini API Key")
-        ).toBeTruthy();
-      });
-    });
-
-    it("toggles API key visibility", async () => {
-      render(<Settings />);
-
-      await waitFor(() => {
-        expect(
-          screen.getByPlaceholderText("Enter your Gemini API Key")
-        ).toBeTruthy();
-      });
-
-      const apiInput = screen.getByPlaceholderText("Enter your Gemini API Key");
-      expect(apiInput).toHaveAttribute("type", "password");
-
-      // Find the eye toggle button associated with the API key input
-      const keyContainer = apiInput.closest('[class*="relative"]');
-      const eyeBtn = keyContainer?.querySelector('button');
-      
-      if (eyeBtn) {
-        const user = userEvent.setup();
-        await user.click(eyeBtn);
-        expect(apiInput).toHaveAttribute("type", "text");
-        await user.click(eyeBtn);
-        expect(apiInput).toHaveAttribute("type", "password");
-      }
-    });
-
     it("shows AI language selector with Urdu as default", async () => {
       render(<Settings />);
 

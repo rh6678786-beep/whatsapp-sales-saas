@@ -19,7 +19,7 @@ const LANGUAGES = [
 export default function Settings() {
   const [settings, setSettings] = useState({
     storeName: 'SalesForce AI',
-    geminiApiKey: '',
+
     geminiModel: 'gemini-flash-latest',
     jazzCashNumber: '0300-1234567',
     advanceAmount: 300,
@@ -52,9 +52,6 @@ export default function Settings() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [showOldPw, setShowOldPw] = useState(false);
   const [showNewPw, setShowNewPw] = useState(false);
-
-  // Show/hide API key
-  const [showApiKey, setShowApiKey] = useState(false);
 
   // Success checkmark for JazzCash
   const [jazzSaved, setJazzSaved] = useState(false);
@@ -140,7 +137,7 @@ export default function Settings() {
     setSaving(true);
     try {
       await axios.post('/api/settings', {
-        geminiApiKey: settings.geminiApiKey,
+
         geminiModel: settings.geminiModel,
         storeName: settings.storeName,
         advanceAmount: settings.advanceAmount,
@@ -435,31 +432,7 @@ export default function Settings() {
               <h3 className="text-xl font-black text-zinc-900 dark:text-white">AI Engine</h3>
               <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Gemini AI configuration</p>
             </div>
-          </div>
-
-          <div className="space-y-5">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                <span className="w-1 h-1 rounded-full bg-violet-500" />
-                Gemini API Key
-              </label>
-              <div className="relative">
-                <input
-                  type={showApiKey ? "text" : "password"}
-                  value={settings.geminiApiKey}
-                  onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
-                  placeholder="Enter your Gemini API Key"
-                  className="w-full bg-zinc-50 dark:bg-zinc-950 border-2 border-zinc-200 dark:border-zinc-800 focus:border-violet-500 focus:ring-4 focus:ring-violet-500/10 rounded-2xl px-5 py-4 pr-12 text-sm font-bold text-zinc-900 dark:text-white placeholder:text-zinc-400 outline-none transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
-                >
-                  {showApiKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
+          </div>            <div className="space-y-5">
             <div className="space-y-2">
               <label className="text-[10px] font-black text-zinc-400 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-2">
                 <span className="w-1 h-1 rounded-full bg-violet-500" />

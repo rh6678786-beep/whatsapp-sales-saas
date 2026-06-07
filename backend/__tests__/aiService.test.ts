@@ -94,7 +94,6 @@ import { getAIClient, generateSalesResponse, generateAdminActionMessage, generat
 
 function createMockSettings(overrides: Record<string, any> = {}): any {
   return {
-    geminiApiKey: "default-test-key",
     geminiModel: "gemini-2.0-flash",
     storeName: "Test Store",
     jazzCashNumber: "0300-1234567",
@@ -153,24 +152,14 @@ describe("aiService", () => {
   // getAIClient
   // ===============================================
   describe("getAIClient", () => {
-    it("should return null when no API key configured", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "" }));
+    it("should return null when env GEMINI_API_KEY is empty", async () => {
       mockEnv.GEMINI_API_KEY = "";
 
       const client = await getAIClient("admin-1");
       expect(client).toBeNull();
     });
 
-    it("should create a new GoogleGenAI client on first call", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "custom-key" }));
-
-      const client = await getAIClient("admin-1");
-      expect(client).not.toBeNull();
-      expect(mockGoogleGenAI).toHaveBeenCalledWith({ apiKey: "custom-key" });
-    });
-
-    it("should use GEMINI_API_KEY from env when admin has no custom key", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "" }));
+    it("should create a new GoogleGenAI client with env key", async () => {
       mockEnv.GEMINI_API_KEY = "env-gemini-key";
 
       const client = await getAIClient("admin-1");
@@ -179,10 +168,10 @@ describe("aiService", () => {
     });
 
     it("should cache and reuse existing AI client for same admin", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "same-key" }));
+      mockEnv.GEMINI_API_KEY = "unique-cache-key";
 
-      const client1 = await getAIClient("admin-1");
-      const client2 = await getAIClient("admin-1");
+      const client1 = await getAIClient("admin-cache-test");
+      const client2 = await getAIClient("admin-cache-test");
       expect(client1).toBe(client2);
       // GoogleGenAI constructor should only have been called once
       expect(mockGoogleGenAI).toHaveBeenCalledTimes(1);
@@ -202,7 +191,6 @@ describe("aiService", () => {
     };
 
     it("should return a fallback message when AI client is unavailable", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "" }));
       mockEnv.GEMINI_API_KEY = "";
 
       const result = await generateSalesResponse(
@@ -491,7 +479,6 @@ describe("aiService", () => {
     });
 
     it("should return null when AI client is unavailable", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "" }));
       mockEnv.GEMINI_API_KEY = "";
 
       const result = await generateAdminActionMessage("admin-1", "user-1", "VERIFY");
@@ -533,7 +520,6 @@ describe("aiService", () => {
   // ===============================================
   describe("generateEnhancedPost", () => {
     it("should return original text when AI client is unavailable", async () => {
-      mockDbService.getSettings.mockResolvedValue(createMockSettings({ geminiApiKey: "" }));
       mockEnv.GEMINI_API_KEY = "";
 
       const result = await generateEnhancedPost("admin-1", "Original text here");

@@ -394,7 +394,6 @@ describe("API Integration: Settings", () => {
     vi.clearAllMocks();
     mockDbService.getSettings.mockResolvedValue({
       storeName: "Test Store",
-      geminiApiKey: "test-key",
       language: "ur",
       memoryConfig: { enabled: true },
       paymentConfig: null,

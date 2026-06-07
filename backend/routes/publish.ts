@@ -204,11 +204,7 @@ router.post("/publish/generate-media", async (req, res) => {
 
     if (mediaType === 'video') {
       return res.json({ success: false, error: 'Video generation is not available yet. Please use Image generation or upload a video manually.' });
-    }    const settings = await dbService.getSettings(adminId);
-    if (!settings.geminiApiKey) {
-      return res.status(400).json({ error: "Gemini API key not configured" });
-    }
-    const genAI = await getAIClient(adminId);
+    }    const genAI = await getAIClient(adminId);
     if (!genAI) {
       return res.status(400).json({ error: "AI client not available. Check your API key configuration." });
     }
@@ -276,10 +272,6 @@ router.post("/publish/generate-product-post", async (req, res) => {
     log.info({ adminId, productName: product.name, imageCount: product.images?.length || 0 }, "Found product for post generation");
 
     const settings = await dbService.getSettings(adminId);
-    if (!settings.geminiApiKey) {
-      return res.status(400).json({ error: "Gemini API key not configured" });
-    }
-
     const genAI = await getAIClient(adminId);
     if (!genAI) {
       return res.status(400).json({ error: "AI client not available. Check your API key configuration." });

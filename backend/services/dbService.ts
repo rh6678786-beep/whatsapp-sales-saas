@@ -314,7 +314,7 @@ function toOrder(record: PrismaOrder): Order {
 }
 
 const SETTINGS_FIELDS = [
-  "geminiApiKey", "geminiModel", "storeName", "jazzCashNumber",
+  "geminiModel", "storeName", "jazzCashNumber",
   "advanceAmount", "businessLogo", "email", "phone", "address",
   "onboardingComplete", "notificationEmail", "smtpHost", "smtpPort",
   "smtpUser", "smtpPass", "emailReportsEnabled", "language",
@@ -322,7 +322,7 @@ const SETTINGS_FIELDS = [
 ] as const;
 
 // Sensitive fields that should be encrypted at rest
-const ENCRYPTED_FIELDS = ["geminiApiKey", "smtpPass"] as const;
+const ENCRYPTED_FIELDS = ["smtpPass"] as const;
 
 const SETTINGS_JSON_FIELDS = [
   "paymentConfig", "reEngagement", "facebook", "instagram",
@@ -331,7 +331,6 @@ const SETTINGS_JSON_FIELDS = [
 ] as const;
 
 const defaultSettings = {
-  geminiApiKey: "",
   geminiModel: "gemini-2.0-flash",
   storeName: "SalesForce AI",
   jazzCashNumber: "0300-1234567",

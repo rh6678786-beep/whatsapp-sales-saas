@@ -10,6 +10,7 @@ import { buildContextString } from "../lib/contextFilter.js";
 import { createChildLogger } from "../lib/logger.js";
 import { env } from "../lib/env.js";
 
+
 const log = createChildLogger("ai:service");
 
 const LANGUAGE_MAP: Record<string, { name: string; instruction: string; adminActionInstruction: string }> = {
@@ -205,19 +206,15 @@ async function enqueueAIRequest<T>(adminId: string, fn: () => Promise<T>): Promi
 }
 
 export async function getAIClient(adminId: string) {
-  const settings = await dbService.getSettings(adminId);
-  const apiKey = settings.geminiApiKey || env.GEMINI_API_KEY;
-
-  if (!apiKey) {
-    log.warn({ adminId }, "No API key configured for admin and no global fallback");
+  if (!env.GEMINI_API_KEY) {
+    log.warn({ adminId }, "No GEMINI_API_KEY configured in environment");
     return null;
   }
 
   const existing = aiClients.get(adminId);
-  const cacheKey = apiKey;
-  if (!existing || existing.apiKey !== cacheKey) {
-    const client = new GoogleGenAI({ apiKey });
-    aiClients.set(adminId, { client, apiKey: cacheKey, lastUsed: Date.now() });
+  if (!existing || existing.apiKey !== env.GEMINI_API_KEY) {
+    const client = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+    aiClients.set(adminId, { client, apiKey: env.GEMINI_API_KEY, lastUsed: Date.now() });
     return client;
   }
   existing.lastUsed = Date.now();
