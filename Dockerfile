@@ -18,6 +18,7 @@ COPY src ./src
 COPY index.html ./
 COPY vite.config.ts ./
 COPY vitest.config.ts ./
+COPY server.ts ./
 
 # Build frontend (vite bundles to dist/)
 RUN npm run build
